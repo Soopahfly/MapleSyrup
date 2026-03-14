@@ -3,7 +3,11 @@ cmake_minimum_required(VERSION 3.13)
 set(PICO_BOARD pico2_w)
 set(PICO_PLATFORM rp2350)
 
-include($ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake)
+# Support both -DPICO_SDK_PATH=... and PICO_SDK_PATH env var
+if(NOT DEFINED PICO_SDK_PATH AND DEFINED ENV{PICO_SDK_PATH})
+    set(PICO_SDK_PATH $ENV{PICO_SDK_PATH})
+endif()
+include(${PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 
 project(bt2maple C CXX ASM)
 set(CMAKE_C_STANDARD 11)

@@ -13,35 +13,33 @@
 static btstack_packet_callback_registration_t hci_event_cb;
 
 // HID host descriptor storage — enough for one device at a time.
-// Increase if supporting simultaneous connections.
 #define HID_DESCRIPTOR_MAX 1024
 static uint8_t hid_descriptor_storage[HID_DESCRIPTOR_MAX];
 
 // ── Rumble forwarding ─────────────────────────────────────────────────────────
-// Checked in the BTstack run loop; if non-zero, a rumble command is pending.
-// Only DS4/DS5 and Xbox support rumble over BT.
-static hid_con_handle_t g_hid_handle = HID_INVALID_CON_HANDLE;
-static uint8_t g_last_rumble = 0;
+// hid_cid == 0 means no active connection (BTstack uses 0 as invalid CID).
+static uint16_t g_hid_cid    = 0;
+static uint8_t  g_last_rumble = 0;
 
 static void send_rumble_ds4(uint8_t intensity) {
-    if (g_hid_handle == HID_INVALID_CON_HANDLE) return;
+    if (g_hid_cid == 0) return;
     // DS4 output report 0x11 via BT HID control channel
     uint8_t report[] = {
-        0x52,           // SET_REPORT (output)
-        0x11,           // report ID
         0xC0, 0x20,     // flags
         0x00,           // rumble right (weak)
         intensity,      // rumble left  (strong)
         0x00, 0x00, 0x00, // LED RGB (leave unchanged)
         0x00, 0x00,
     };
-    hid_host_send_output_report(g_hid_handle, report, sizeof(report));
+    // HID_REPORT_TYPE_OUTPUT, report_id = 0x11
+    hid_host_send_set_report(g_hid_cid, HID_REPORT_TYPE_OUTPUT,
+                             0x11, report, sizeof(report));
 }
 
 // ── HID Report Handler ────────────────────────────────────────────────────────
 static void hid_host_packet_handler(uint8_t packet_type, uint16_t channel,
                                      uint8_t *packet, uint16_t size) {
-    (void)channel;
+    (void)channel; (void)size;
 
     if (packet_type == HCI_EVENT_PACKET) {
         switch (hci_event_packet_get_type(packet)) {
@@ -55,22 +53,22 @@ static void hid_host_packet_handler(uint8_t packet_type, uint16_t channel,
                             printf("[bt] HID open failed: 0x%02X\n", status);
                             break;
                         }
-                        g_hid_handle = hid_subevent_connection_opened_get_con_handle(packet);
-                        printf("[bt] HID connected (handle 0x%04X)\n", g_hid_handle);
+                        g_hid_cid = hid_subevent_connection_opened_get_hid_cid(packet);
+                        printf("[bt] HID connected (cid 0x%04X)\n", g_hid_cid);
                         break;
                     }
                     case HID_SUBEVENT_CONNECTION_CLOSED:
                         printf("[bt] HID disconnected\n");
-                        g_hid_handle = HID_INVALID_CON_HANDLE;
+                        g_hid_cid     = 0;
                         g_last_rumble = 0;
                         {
                             dc_controller_state_t neutral = DC_STATE_NEUTRAL;
                             controller_state_update(&neutral);
                         }
                         break;
-                    case HID_SUBEVENT_INPUT_REPORT: {
-                        const uint8_t *report = hid_subevent_input_report_get_report(packet);
-                        uint16_t len = hid_subevent_input_report_get_report_len(packet);
+                    case HID_SUBEVENT_REPORT: {
+                        const uint8_t *report = hid_subevent_report_get_report(packet);
+                        uint16_t       len    = hid_subevent_report_get_report_len(packet);
                         dc_controller_state_t state = DC_STATE_NEUTRAL;
                         hid_map_report(report, len, &state);
                         controller_state_update(&state);
@@ -85,7 +83,6 @@ static void hid_host_packet_handler(uint8_t packet_type, uint16_t channel,
             default:
                 break;
         }
-        return;
     }
 }
 
@@ -99,30 +96,30 @@ static void hci_event_handler(uint8_t packet_type, uint16_t channel,
         case BTSTACK_EVENT_STATE:
             if (btstack_event_state_get_state(packet) == HCI_STATE_WORKING) {
                 printf("[bt] HCI ready — scannable, waiting for gamepad\n");
-                // Make us discoverable and connectable so a gamepad can pair.
                 gap_set_default_link_policy_settings(
                     LM_LINK_POLICY_ENABLE_SNIFF_MODE |
                     LM_LINK_POLICY_ENABLE_ROLE_SWITCH);
                 gap_discoverable_control(1);
                 gap_connectable_control(1);
-                // Require SSP (Secure Simple Pairing) — most modern controllers use it.
                 gap_set_security_level(LEVEL_2);
             }
             break;
 
-        case HCI_EVENT_PIN_CODE_REQUEST:
+        case HCI_EVENT_PIN_CODE_REQUEST: {
             // Legacy pairing: accept "0000" for older devices.
-            hci_event_pin_code_request_get_bd_addr(packet, (bd_addr_t){0});
-            hci_send_cmd(&hci_pin_code_request_reply,
-                         hci_event_pin_code_request_get_bd_addr(packet),
-                         4, "0000");
+            bd_addr_t addr;
+            hci_event_pin_code_request_get_bd_addr(packet, addr);
+            hci_send_cmd(&hci_pin_code_request_reply, addr, 4, "0000");
             break;
+        }
 
-        case HCI_EVENT_USER_CONFIRMATION_REQUEST:
+        case HCI_EVENT_USER_CONFIRMATION_REQUEST: {
             // SSP: auto-confirm — fine for a dedicated controller adapter.
-            hci_send_cmd(&hci_user_confirmation_request_reply,
-                         hci_event_user_confirmation_request_get_bd_addr(packet));
+            bd_addr_t addr;
+            hci_event_user_confirmation_request_get_bd_addr(packet, addr);
+            hci_send_cmd(&hci_user_confirmation_request_reply, addr);
             break;
+        }
 
         case HCI_EVENT_DISCONNECTION_COMPLETE: {
             printf("[bt] disconnected\n");

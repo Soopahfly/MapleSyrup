@@ -9,6 +9,7 @@
 #define VMU_BLOCK_SIZE      512
 #define VMU_NUM_BLOCKS      256
 #define VMU_IMAGE_SIZE      (VMU_BLOCK_SIZE * VMU_NUM_BLOCKS)   // 128 KB
+#define VMU_NUM_BANKS       10   // bank slots 0-9 (per-game VMU swap)
 
 // ── VMU LCD ───────────────────────────────────────────────────────────────────
 // 48 × 32 pixels, 1 bpp, row-major.  Total: 192 bytes.

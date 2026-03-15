@@ -2,13 +2,11 @@
 
 #include <stdint.h>
 #include "controller.h"
+#include <controller/uni_gamepad.h>
 
-// Parse a raw HID report from a Bluetooth gamepad and write the result into
-// *state.  The caller is responsible for calling controller_state_update()
-// afterwards.
+// Map a Bluepad32 normalised gamepad struct to a Dreamcast controller state.
+// Called from bt.c's on_controller_data callback.
 //
-// report : pointer to the raw HID report bytes
-// len    : report length in bytes
-// state  : output — updated with the mapped Dreamcast controller state
-void hid_map_report(const uint8_t *report, uint16_t len,
-                    dc_controller_state_t *state);
+// gp    : Bluepad32 gamepad data (axes –512..+511, triggers 0..1023, buttons bitmask)
+// state : output — updated with the mapped Dreamcast controller state
+void hid_map_gamepad(const uni_gamepad_t *gp, dc_controller_state_t *state);

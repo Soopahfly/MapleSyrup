@@ -12,7 +12,34 @@ include(${PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 project(bt2maple C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 
+# ── Bluepad32 via FetchContent ─────────────────────────────────────────────────
+# Must be declared before pico_sdk_init() so that BTSTACK_ROOT can be set to
+# the Pico SDK's bundled btstack (matching what CYW43 arch expects).
+include(FetchContent)
+
+# Point btstack at the Pico SDK's copy so it matches what pico_btstack_* uses.
+set(BTSTACK_ROOT ${PICO_SDK_PATH}/lib/btstack)
+
+FetchContent_Declare(
+    bluepad32
+    GIT_REPOSITORY https://github.com/ricardoquesada/bluepad32.git
+    GIT_TAG        main
+    GIT_SUBMODULES ""   # Don't clone external/btstack — we use Pico SDK's copy
+    SOURCE_SUBDIR  src/components/bluepad32
+)
+FetchContent_MakeAvailable(bluepad32)
+
 pico_sdk_init()
+
+# Bluepad32 needs btstack_config.h and sdkconfig.h at compile time.
+# These live in src/ — propagate to the bluepad32 static-library target.
+target_include_directories(bluepad32 PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/src
+)
+
+# Disable asserts in Bluepad32 to avoid undefined reference to `assert` on
+# bare-metal ARM (newlib assert() calls abort() which requires OS support).
+target_compile_definitions(bluepad32 PRIVATE NDEBUG)
 
 add_executable(bt2maple
     src/main.c
@@ -29,7 +56,17 @@ pico_generate_pio_header(bt2maple ${CMAKE_CURRENT_LIST_DIR}/src/maple/maple.pio)
 target_include_directories(bt2maple PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/src
     ${CMAKE_CURRENT_LIST_DIR}
+    # Bluepad32 public headers
+    ${bluepad32_SOURCE_DIR}/include
+    # BTstack headers (for btstack_config.h resolution)
+    ${BTSTACK_ROOT}/src
+    ${BTSTACK_ROOT}/3rd-party/bluedroid/encoder/include
+    ${BTSTACK_ROOT}/3rd-party/bluedroid/decoder/include
 )
+
+# Bluepad32 also needs to find sdkconfig.h / btstack_config.h from src/
+# Use include_directories so the static lib inherits it.
+include_directories(${CMAKE_CURRENT_LIST_DIR}/src)
 
 target_compile_options(bt2maple PRIVATE
     -O2
@@ -56,6 +93,7 @@ target_link_libraries(bt2maple
     pico_btstack_classic
     pico_btstack_cyw43
     pico_cyw43_arch_none
+    bluepad32
 )
 
 pico_enable_stdio_usb(bt2maple 1)

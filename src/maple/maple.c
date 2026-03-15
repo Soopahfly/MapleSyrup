@@ -3,6 +3,7 @@
 #include "vmu.h"
 #include "config.h"
 #include "controller.h"
+#include "usb/usb_host.h"
 
 #include "hardware/pio.h"
 #include "hardware/clocks.h"
@@ -322,6 +323,12 @@ void __attribute__((noreturn)) __time_critical_func(maple_run)(void) {
     printf("[maple] run loop started\n");
 
     while (true) {
+        // ── 0. Service USB host events ────────────────────────────────────────
+        // tuh_task() is non-blocking; it processes any pending TinyUSB events
+        // and returns immediately if there is nothing to do.  Calling it here
+        // ensures wired controllers are serviced once per Maple frame (~5 ms).
+        usb_host_task();
+
         // ── 1. Receive a complete Maple frame ─────────────────────────────────
         uint32_t rx_len = rx_receive_frame();
         if (rx_len < 4) continue;   // timeout or framing error

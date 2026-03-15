@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 700" width="1100" height="700" font-family="monospace, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 780" width="1100" height="780" font-family="monospace, sans-serif">
 
   <!-- Background -->
-  <rect width="1100" height="700" fill="#1a1a2e"/>
+  <rect width="1100" height="780" fill="#1a1a2e"/>
 
   <!-- Title -->
   <text x="550" y="35" text-anchor="middle" fill="#e0e0e0" font-size="20" font-weight="bold">MapleSyrup — Full Wiring (Maple + SD Card + OLED + Buzzer)</text>
@@ -211,6 +211,20 @@
   <text x="860" y="622" fill="#e06060" font-size="10" font-weight="bold">Power</text>
   <text x="860" y="638" fill="#aaa" font-size="10">VSYS=5V  3V3=3.3V</text>
 
+  <!-- ===================== USB HOST NOTE ===================== -->
+  <!-- USB host mode: micro-USB port on the Pico 2 W is used in host mode.
+       Connect a USB OTG adapter (micro-USB male to USB-A female) then plug
+       any USB HID gamepad directly.  GPIO 24 drives the VBUS boost converter
+       to power the connected device. -->
+  <rect x="20" y="500" width="330" height="130" rx="8" fill="#1a1020" stroke="#c040c0" stroke-width="2"/>
+  <text x="185" y="523" text-anchor="middle" fill="#e080ff" font-size="12" font-weight="bold">USB Host Mode (Wired Controllers)</text>
+  <text x="35" y="543" fill="#c080e0" font-size="10">Pico 2 W micro-USB port → host mode</text>
+  <text x="35" y="560" fill="#c080e0" font-size="10">Adapter needed: micro-USB male → USB-A female</text>
+  <text x="35" y="577" fill="#c080e0" font-size="10">Plug any USB HID gamepad (PS3/PS4/PS5/Xbox/8BitDo)</text>
+  <text x="35" y="594" fill="#aaa"     font-size="10">GPIO 24 → VBUS enable (high = power on)</text>
+  <text x="35" y="611" fill="#888"     font-size="10">Stdio: UART on GP0 (TX) / GP1 (RX) — USB no longer CDC</text>
+  <text x="35" y="625" fill="#555"     font-size="9">Note: BT and USB controllers both use the same DC port</text>
+
   <!-- Footer -->
-  <text x="550" y="685" text-anchor="middle" fill="#555" font-size="10">github.com/Soopahfly/MapleSyrup</text>
+  <text x="550" y="765" text-anchor="middle" fill="#555" font-size="10">github.com/Soopahfly/MapleSyrup</text>
 </svg>

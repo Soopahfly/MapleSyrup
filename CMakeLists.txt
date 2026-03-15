@@ -63,6 +63,7 @@ add_executable(bt2maple
     src/bluetooth/hid_map.c
     src/display/oled.c
     src/storage/sd_card.c
+    src/usb/usb_host.c
 )
 
 pico_generate_pio_header(bt2maple ${CMAKE_CURRENT_LIST_DIR}/src/maple/maple.pio)
@@ -116,9 +117,12 @@ target_link_libraries(bt2maple
     pico_cyw43_arch_none
     bluepad32
     no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
+    tinyusb_host
+    tinyusb_board
 )
 
-pico_enable_stdio_usb(bt2maple 1)
-pico_enable_stdio_uart(bt2maple 0)
+# USB is in host mode — stdio must use UART (GP0 TX / GP1 RX)
+pico_enable_stdio_usb(bt2maple 0)
+pico_enable_stdio_uart(bt2maple 1)
 
 pico_add_extra_outputs(bt2maple)

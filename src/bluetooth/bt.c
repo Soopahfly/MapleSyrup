@@ -4,26 +4,89 @@
 
 #include "pico/cyw43_arch.h"
 #include "btstack.h"
+#include "btstack_hid_parser.h"
 
 #include <stdio.h>
 #include <string.h>
 
-// ── State ─────────────────────────────────────────────────────────────────────
-static btstack_packet_callback_registration_t hci_event_callback_registration;
+// ── BTstack component instances ───────────────────────────────────────────────
+static btstack_packet_callback_registration_t hci_event_cb;
 
-// ── HID Report Handler ────────────────────────────────────────────────────────
-// Called by BTstack on every incoming HID interrupt-channel packet.
-// Runs on Core 1 inside the BTstack event loop — zero extra latency.
-static void hid_report_handler(uint8_t packet_type, uint16_t channel,
-                                uint8_t *packet, uint16_t size) {
-    if (packet_type != HID_SUBEVENT_INPUT_REPORT) return;
+// HID host descriptor storage — enough for one device at a time.
+#define HID_DESCRIPTOR_MAX 1024
+static uint8_t hid_descriptor_storage[HID_DESCRIPTOR_MAX];
 
-    dc_controller_state_t state;
-    hid_map_report(packet, size, &state);
-    controller_state_update(&state);
+// ── Rumble forwarding ─────────────────────────────────────────────────────────
+// hid_cid == 0 means no active connection (BTstack uses 0 as invalid CID).
+static uint16_t g_hid_cid    = 0;
+static uint8_t  g_last_rumble = 0;
+
+static void send_rumble_ds4(uint8_t intensity) {
+    if (g_hid_cid == 0) return;
+    // DS4 output report 0x11 via BT HID control channel
+    uint8_t report[] = {
+        0xC0, 0x20,     // flags
+        0x00,           // rumble right (weak)
+        intensity,      // rumble left  (strong)
+        0x00, 0x00, 0x00, // LED RGB (leave unchanged)
+        0x00, 0x00,
+    };
+    // HID_REPORT_TYPE_OUTPUT, report_id = 0x11
+    hid_host_send_set_report(g_hid_cid, HID_REPORT_TYPE_OUTPUT,
+                             0x11, report, sizeof(report));
 }
 
-// ── HCI / Connection Event Handler ───────────────────────────────────────────
+// ── HID Report Handler ────────────────────────────────────────────────────────
+static void hid_host_packet_handler(uint8_t packet_type, uint16_t channel,
+                                     uint8_t *packet, uint16_t size) {
+    (void)channel; (void)size;
+
+    if (packet_type == HCI_EVENT_PACKET) {
+        switch (hci_event_packet_get_type(packet)) {
+
+            case HCI_EVENT_HID_META: {
+                uint8_t sub = hci_event_hid_meta_get_subevent_code(packet);
+                switch (sub) {
+                    case HID_SUBEVENT_CONNECTION_OPENED: {
+                        uint8_t status = hid_subevent_connection_opened_get_status(packet);
+                        if (status != ERROR_CODE_SUCCESS) {
+                            printf("[bt] HID open failed: 0x%02X\n", status);
+                            break;
+                        }
+                        g_hid_cid = hid_subevent_connection_opened_get_hid_cid(packet);
+                        printf("[bt] HID connected (cid 0x%04X)\n", g_hid_cid);
+                        break;
+                    }
+                    case HID_SUBEVENT_CONNECTION_CLOSED:
+                        printf("[bt] HID disconnected\n");
+                        g_hid_cid     = 0;
+                        g_last_rumble = 0;
+                        {
+                            dc_controller_state_t neutral = DC_STATE_NEUTRAL;
+                            controller_state_update(&neutral);
+                        }
+                        break;
+                    case HID_SUBEVENT_REPORT: {
+                        const uint8_t *report = hid_subevent_report_get_report(packet);
+                        uint16_t       len    = hid_subevent_report_get_report_len(packet);
+                        dc_controller_state_t state = DC_STATE_NEUTRAL;
+                        hid_map_report(report, len, &state);
+                        controller_state_update(&state);
+                        break;
+                    }
+                    default:
+                        break;
+                }
+                break;
+            }
+
+            default:
+                break;
+        }
+    }
+}
+
+// ── HCI Event Handler ─────────────────────────────────────────────────────────
 static void hci_event_handler(uint8_t packet_type, uint16_t channel,
                                uint8_t *packet, uint16_t size) {
     (void)channel; (void)size;
@@ -32,37 +95,55 @@ static void hci_event_handler(uint8_t packet_type, uint16_t channel,
     switch (hci_event_packet_get_type(packet)) {
         case BTSTACK_EVENT_STATE:
             if (btstack_event_state_get_state(packet) == HCI_STATE_WORKING) {
-                printf("[bt] HCI ready — waiting for gamepad connection\n");
-                // TODO: If a paired device address is stored in flash (NVM link
-                //       key), initiate outbound connection here instead of waiting
-                //       for the gamepad to connect to us.
+                printf("[bt] HCI ready — scannable, waiting for gamepad\n");
+                gap_set_default_link_policy_settings(
+                    LM_LINK_POLICY_ENABLE_SNIFF_MODE |
+                    LM_LINK_POLICY_ENABLE_ROLE_SWITCH);
+                gap_discoverable_control(1);
+                gap_connectable_control(1);
+                gap_set_security_level(LEVEL_2);
             }
             break;
 
-        case HCI_EVENT_CONNECTION_COMPLETE:
-            printf("[bt] Connection complete\n");
+        case HCI_EVENT_PIN_CODE_REQUEST: {
+            // Legacy pairing: accept "0000" for older devices.
+            bd_addr_t addr;
+            hci_event_pin_code_request_get_bd_addr(packet, addr);
+            hci_send_cmd(&hci_pin_code_request_reply, addr, 4, "0000");
             break;
+        }
 
-        case HCI_EVENT_DISCONNECTION_COMPLETE:
-            printf("[bt] Disconnected — returning to scan\n");
-            // Reset controller to neutral so the DC doesn't see stuck inputs.
-            {
-                dc_controller_state_t neutral = {
-                    .buttons       = DC_BUTTONS_RELEASED,
-                    .right_trigger = DC_TRIGGER_RELEASED,
-                    .left_trigger  = DC_TRIGGER_RELEASED,
-                    .joy_x         = DC_STICK_CENTER,
-                    .joy_y         = DC_STICK_CENTER,
-                    .joy2_x        = DC_STICK_CENTER,
-                    .joy2_y        = DC_STICK_CENTER,
-                };
-                controller_state_update(&neutral);
-            }
+        case HCI_EVENT_USER_CONFIRMATION_REQUEST: {
+            // SSP: auto-confirm — fine for a dedicated controller adapter.
+            bd_addr_t addr;
+            hci_event_user_confirmation_request_get_bd_addr(packet, addr);
+            hci_send_cmd(&hci_user_confirmation_request_reply, addr);
             break;
+        }
+
+        case HCI_EVENT_DISCONNECTION_COMPLETE: {
+            printf("[bt] disconnected\n");
+            dc_controller_state_t neutral = DC_STATE_NEUTRAL;
+            controller_state_update(&neutral);
+            break;
+        }
 
         default:
             break;
     }
+}
+
+// ── Rumble poll (called once per BTstack run-loop tick via a timer) ───────────
+static btstack_timer_source_t rumble_timer;
+
+static void rumble_timer_handler(btstack_timer_source_t *ts) {
+    uint8_t intensity = g_rumble_intensity;
+    if (intensity != g_last_rumble) {
+        g_last_rumble = intensity;
+        send_rumble_ds4(intensity);
+    }
+    btstack_run_loop_set_timer(ts, 16);   // re-arm every ~16 ms
+    btstack_run_loop_add_timer(ts);
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
@@ -72,33 +153,24 @@ void bt_init(void) {
         return;
     }
 
-    // Register HCI event handler (connection management)
-    hci_event_callback_registration.callback = hci_event_handler;
-    hci_add_event_handler(&hci_event_callback_registration);
+    // HCI events (connection management, SSP)
+    hci_event_cb.callback = hci_event_handler;
+    hci_add_event_handler(&hci_event_cb);
 
-    // TODO: Register HID host profile callbacks.
-    //
-    // The Pico SDK bundles BTstack; the HID host API surface depends on the
-    // exact version shipped with your SDK release.  Typical setup:
-    //
-    //   hid_host_init(hid_descriptor_storage, sizeof(hid_descriptor_storage));
-    //   hid_host_register_packet_handler(hid_report_handler);
-    //
-    // Then set GAP to connectable + page-scan so the gamepad can find us:
-    //   gap_set_default_link_policy_settings(LM_LINK_POLICY_ENABLE_SNIFF_MODE);
-    //   hci_set_master_slave_policy(HCI_ROLE_MASTER);
-    //   gap_discoverable_control(1);
-    //   gap_connectable_control(1);
+    // HID Host profile
+    hid_host_init(hid_descriptor_storage, sizeof(hid_descriptor_storage));
+    hid_host_register_packet_handler(hid_host_packet_handler);
 
-    // Power on the BT controller
+    // Rumble polling timer
+    btstack_run_loop_set_timer_handler(&rumble_timer, rumble_timer_handler);
+    btstack_run_loop_set_timer(&rumble_timer, 100);
+    btstack_run_loop_add_timer(&rumble_timer);
+
     hci_power_control(HCI_POWER_ON);
-
     printf("[bt] init complete\n");
 }
 
 // ── Run ───────────────────────────────────────────────────────────────────────
 void bt_run(void) {
-    // btstack_run_loop_execute() blocks forever, calling registered callbacks
-    // as events arrive from the CYW43 chip.
     btstack_run_loop_execute();
 }

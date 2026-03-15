@@ -6,10 +6,18 @@
 
 #include "hardware/pio.h"
 #include "hardware/clocks.h"
+#include "hardware/gpio.h"
 #include "pico/stdlib.h"
 
 #include <string.h>
 #include <stdio.h>
+
+// ── PIO clock dividers ────────────────────────────────────────────────────────
+// TX: controls bit timing.  The dreamwave TX PIO uses ~4 PIO cycles per half-bit.
+//   At 150 MHz sys-clock, 8.904 gives ~2 Mbps bit rate.
+#define MAPLE_TX_CLOCK_DIVIDER 8.904f
+// RX: run as fast as possible so we catch every edge.
+#define MAPLE_RX_CLOCK_DIVIDER 1.0f
 
 // ── Controller Device Info Payload ────────────────────────────────────────────
 // func: controller (0x00000001)
@@ -36,13 +44,16 @@ static const uint8_t k_ctrl_device_info[] = {
 };
 
 // ── Buffers ───────────────────────────────────────────────────────────────────
-// raw_resp: intermediate byte buffer for building unencoded responses.
-// tx_buf:   pre-encoded 32-bit words pushed to the PIO TX FIFO.
-static uint8_t  raw_resp[4 + 256*4 + 1];   // max frame
-static uint32_t tx_buf[2 + 256 + 2];       // SOF(2) + encoded bytes + EOF(1)
-static uint32_t tx_words;
+// raw_resp: raw byte buffer for building responses.  Header (4) + payload + CRC.
+// tx_bytes: flat byte array pushed to PIO TX one byte at a time.
+// rx_bytes: raw bytes received from PIO RX.
+#define MAX_PACKET_BYTES  (4 + 256*4 + 1)
+static uint8_t  raw_resp[MAX_PACKET_BYTES];
+static uint32_t raw_resp_len;
 
-static uint32_t rx_buf[256];
+#define MAX_RX_BYTES 512
+static uint8_t rx_bytes[MAX_RX_BYTES];
+
 static uint32_t rx_offset;  // PIO program offset for RX SM (needed to restart)
 
 // ── CRC ───────────────────────────────────────────────────────────────────────
@@ -53,6 +64,8 @@ static uint8_t maple_crc(const uint8_t *data, uint32_t len) {
 }
 
 // ── Response Builder Helpers ──────────────────────────────────────────────────
+// Builds a complete Maple response frame into out[].
+// Returns total byte count (header + padded payload + CRC).
 static uint32_t write_resp(uint8_t *out, uint8_t resp_code,
                             uint8_t dest, uint8_t src,
                             const uint8_t *payload, uint32_t payload_bytes) {
@@ -71,19 +84,6 @@ static uint32_t write_resp(uint8_t *out, uint8_t resp_code,
     return total + 1;
 }
 
-// ── TX Encoding ───────────────────────────────────────────────────────────────
-// Converts a raw response byte buffer into PIO-ready TX FIFO words.
-// Format: SOF (2 words) + one 32-bit word per byte + EOF (1 word).
-static uint32_t encode_tx(const uint8_t *bytes, uint32_t len) {
-    uint32_t w = 0;
-    maple_encode_sof(&tx_buf[0]);
-    w = 2;
-    for (uint32_t i = 0; i < len; i++)
-        tx_buf[w++] = maple_encode_byte(bytes[i]);
-    tx_buf[w++] = maple_encode_eof();
-    return w;
-}
-
 // ── Controller Response Builders ──────────────────────────────────────────────
 static uint32_t build_ctrl_device_info(uint8_t dest, uint8_t src) {
     return write_resp(raw_resp, MAPLE_RESP_DEVICE_INFO, dest, src,
@@ -94,8 +94,9 @@ static uint32_t build_ctrl_condition(uint8_t dest, uint8_t src) {
     dc_controller_state_t state;
     controller_state_read(&state);
 
+    // Payload: function type word + 8 controller state bytes
     uint8_t payload[4 + sizeof(state)];
-    // Function type word
+    // Function type: controller = 0x00000001 (little-endian)
     payload[0] = 0x01; payload[1] = 0x00; payload[2] = 0x00; payload[3] = 0x00;
     memcpy(payload + 4, &state, sizeof(state));
     return write_resp(raw_resp, MAPLE_RESP_DATA, dest, src,
@@ -103,85 +104,188 @@ static uint32_t build_ctrl_condition(uint8_t dest, uint8_t src) {
 }
 
 static uint32_t build_ctrl_rumble_ack(uint8_t dest, uint8_t src,
-                                       const uint32_t *payload_words, uint8_t nwords) {
-    // Extract rumble intensity from SET_CONDITION payload.
-    // Word 0: func type (0x00000100 = vibration)
-    // Word 1: [intensity_left << 8 | intensity_right] (typical encoding)
-    if (nwords >= 2 && (payload_words[0] & MAPLE_FUNC_VIBRATION)) {
-        uint8_t intensity = (payload_words[1] >> 8) & 0xFF;
-        controller_set_rumble(intensity);
+                                       const uint8_t *payload_bytes, uint32_t payload_len) {
+    // Word 0 of payload: func type (0x00000100 = vibration)
+    // Word 1: intensity encoding
+    if (payload_len >= 8) {
+        uint32_t func_word;
+        memcpy(&func_word, payload_bytes, 4);
+        if (func_word & MAPLE_FUNC_VIBRATION) {
+            uint8_t intensity = payload_bytes[5];   // typical rumble intensity byte
+            controller_set_rumble(intensity);
+        }
     }
     return write_resp(raw_resp, MAPLE_RESP_ACK, dest, src, NULL, 0);
 }
 
-// ── Command Dispatch ──────────────────────────────────────────────────────────
-static void handle_command(const maple_header_t *hdr) {
-    uint32_t raw_bytes = 0;
-    const uint32_t *payload = &rx_buf[1]; // payload words start after header
+// ── RX: receive a complete Maple frame ───────────────────────────────────────
+// The dreamwave RX PIO pushes 8-bit groups (in low byte of 32-bit FIFO word).
+// Each group of 8 bits represents 8 sampled Maple bus data bits.
+// Two consecutive PIO "bytes" span one actual Maple data byte:
+//   packet_byte = ((prev & 0x03) << 6) | ((cur & 0xFC) >> 2)
+// SOF is detected when (cur & 0xFC) == 0b10000100.
+//
+// Returns number of payload bytes assembled (0 on failure/timeout).
+static uint32_t rx_receive_frame(void) {
+    PIO pio = MAPLE_PIO;
+    uint sm = MAPLE_SM_RX;
 
-    if (hdr->destination == MAPLE_ADDR_VMU) {
-        // Route all VMU commands to vmu.c
-        raw_bytes = vmu_handle_command(hdr->command, hdr->destination, hdr->source,
-                                       payload, hdr->frame_words, raw_resp);
-        if (hdr->command == MAPLE_CMD_GAME_ID) {
-            vmu_on_game_id((const uint8_t *)payload, hdr->frame_words * 4);
+    // Restart SM from beginning to resync
+    pio_sm_set_enabled(pio, sm, false);
+    pio_sm_clear_fifos(pio, sm);
+    pio_sm_restart(pio, sm);
+    pio_sm_exec(pio, sm, pio_encode_jmp(rx_offset));
+    pio_sm_set_enabled(pio, sm, true);
+
+    // Set SDCKB as input before reading
+    gpio_set_dir(PIN_MAPLE_SDCKB, GPIO_IN);
+    gpio_set_function(PIN_MAPLE_SDCKB, GPIO_FUNC_PIO0);
+
+    enum { IDLE, READING } state = IDLE;
+    const uint32_t upper = 0xFC;  // 0b11111100
+    const uint32_t lower = 0x03;  // 0b00000011
+    uint8_t cur_byte = 0, prev_byte = 0;
+    uint32_t bytes_read = 0, max_bytes = 5;  // 4 header + 1 CRC minimum
+    uint8_t checksum = 0;
+
+    // Timeout: 5 ms (in tight loop iterations; roughly 1M iterations/ms at 150 MHz)
+    uint32_t timeout = 5000000u;
+
+    while (timeout--) {
+        if (pio_sm_is_rx_fifo_empty(pio, sm)) continue;
+
+        uint32_t word = pio_sm_get(pio, sm);
+        cur_byte = (uint8_t)(word & 0xFF);
+
+        if (state == IDLE) {
+            // SOF marker: specific pattern in the bit-stream
+            if ((cur_byte & upper) == 0b10000100) {
+                state = READING;
+                bytes_read = 0;
+                max_bytes = 5;
+                checksum = 0;
+            }
+        } else {
+            // Reassemble actual Maple byte from two PIO bytes
+            uint8_t packet_byte = (uint8_t)(((prev_byte & lower) << 6) | ((cur_byte & upper) >> 2));
+
+            if (bytes_read < MAX_RX_BYTES) {
+                rx_bytes[bytes_read] = packet_byte;
+            }
+            bytes_read++;
+
+            if (bytes_read == 1) {
+                // First byte is header word count; extend max_bytes
+                max_bytes += (uint32_t)packet_byte * 4;
+            } else if (bytes_read == max_bytes) {
+                // Last byte is CRC
+                if (checksum != packet_byte) {
+                    printf("[maple] RX CRC mismatch (got 0x%02X, expected 0x%02X)\n",
+                           packet_byte, checksum);
+                    return 0;
+                }
+                return bytes_read;
+            }
+            checksum ^= packet_byte;
         }
 
-    } else {
-        // Controller commands (addressed to MAPLE_ADDR_CONTROLLER or 0x20)
-        switch (hdr->command) {
-            case MAPLE_CMD_DEVICE_INFO:
-            case MAPLE_CMD_ALL_DEVICE_INFO:
-                raw_bytes = build_ctrl_device_info(hdr->destination, hdr->source);
-                break;
-            case MAPLE_CMD_GET_CONDITION:
-                raw_bytes = build_ctrl_condition(hdr->destination, hdr->source);
-                break;
-            case MAPLE_CMD_SET_CONDITION:
-                raw_bytes = build_ctrl_rumble_ack(hdr->destination, hdr->source,
-                                                   payload, hdr->frame_words);
-                break;
-            case MAPLE_CMD_RESET:
-            case MAPLE_CMD_SHUTDOWN:
-                break;
-            default:
-                printf("[maple] unknown cmd 0x%02X to 0x%02X\n",
-                       hdr->command, hdr->destination);
-                break;
-        }
+        prev_byte = cur_byte;
+        timeout = 5000000u;  // reset timeout after each received byte
     }
 
-    tx_words = (raw_bytes > 0) ? encode_tx(raw_resp, raw_bytes) : 0;
+    return 0;  // timeout
 }
 
-// ── PIO Helpers ───────────────────────────────────────────────────────────────
-static void rx_sm_restart(void) {
-    pio_sm_set_enabled(MAPLE_PIO, MAPLE_SM_RX, false);
-    pio_sm_clear_fifos(MAPLE_PIO, MAPLE_SM_RX);
-    pio_sm_restart(MAPLE_PIO, MAPLE_SM_RX);
-    pio_sm_exec(MAPLE_PIO, MAPLE_SM_RX, pio_encode_jmp(rx_offset));
-    pio_sm_set_enabled(MAPLE_PIO, MAPLE_SM_RX, true);
+// ── Command Dispatch ──────────────────────────────────────────────────────────
+// rx_bytes layout after rx_receive_frame():
+//   [0] = frame_words  (payload word count, not counting header)
+//   [1] = command
+//   [2] = destination address
+//   [3] = source address
+//   [4..] = payload bytes
+//   [last] = CRC (already verified)
+static void handle_command(void) {
+    if (raw_resp_len > 0) return;  // shouldn't happen
+
+    uint8_t frame_words = rx_bytes[0];
+    uint8_t command     = rx_bytes[1];
+    uint8_t dest        = rx_bytes[2];
+    uint8_t src         = rx_bytes[3];
+    const uint8_t *payload = rx_bytes + 4;
+    uint32_t payload_len   = (uint32_t)frame_words * 4;
+
+    // Filter: only respond to our own addresses
+    if (dest != MAPLE_ADDR_CONTROLLER && dest != MAPLE_ADDR_VMU &&
+        dest != (MAPLE_ADDR_CONTROLLER & 0xC0)) {
+        return;
+    }
+
+    if (dest == MAPLE_ADDR_VMU) {
+        raw_resp_len = vmu_handle_command(command, dest, src,
+                                          (const uint32_t *)payload,
+                                          frame_words, raw_resp);
+        if (command == MAPLE_CMD_GAME_ID) {
+            vmu_on_game_id(payload, (uint8_t)(payload_len));
+        }
+        return;
+    }
+
+    // Controller commands
+    switch (command) {
+        case MAPLE_CMD_DEVICE_INFO:
+        case MAPLE_CMD_ALL_DEVICE_INFO:
+            raw_resp_len = build_ctrl_device_info(dest, src);
+            break;
+        case MAPLE_CMD_GET_CONDITION:
+            raw_resp_len = build_ctrl_condition(dest, src);
+            break;
+        case MAPLE_CMD_SET_CONDITION:
+            raw_resp_len = build_ctrl_rumble_ack(dest, src, payload, payload_len);
+            break;
+        case MAPLE_CMD_RESET:
+        case MAPLE_CMD_SHUTDOWN:
+            raw_resp_len = 0;
+            break;
+        default:
+            printf("[maple] unknown cmd 0x%02X to 0x%02X\n", command, dest);
+            raw_resp_len = 0;
+            break;
+    }
 }
 
+// ── TX: transmit a response ───────────────────────────────────────────────────
+// The dreamwave TX PIO handles SOP, data bit encoding (phase1/phase2), and EOP.
+// We just push the raw response bytes to the TX FIFO (each byte as MSB of 32-bit word).
 static void transmit_response(void) {
-    // Hand ownership of the bus pins to the TX SM.
-    pio_sm_set_consecutive_pindirs(MAPLE_PIO, MAPLE_SM_TX,
-                                   PIN_MAPLE_SDCKA, 2, true);
-    pio_sm_set_enabled(MAPLE_PIO, MAPLE_SM_TX, true);
+    PIO pio = MAPLE_PIO;
+    uint sm = MAPLE_SM_TX;
 
-    for (uint32_t i = 0; i < tx_words; i++)
-        pio_sm_put_blocking(MAPLE_PIO, MAPLE_SM_TX, tx_buf[i]);
+    // Set pins as outputs and hand to TX SM
+    pio_sm_set_consecutive_pindirs(pio, sm, PIN_MAPLE_SDCKA, 2, true);
+    gpio_set_function(PIN_MAPLE_SDCKA,     GPIO_FUNC_PIO0);
+    gpio_set_function(PIN_MAPLE_SDCKB,     GPIO_FUNC_PIO0);
+    pio_sm_set_enabled(pio, sm, true);
 
-    // Wait for the TX FIFO and shift register to drain.
-    while (!pio_sm_is_tx_fifo_empty(MAPLE_PIO, MAPLE_SM_TX))
+    // Push each byte as upper byte of 32-bit word (PIO shifts out from MSB)
+    for (uint32_t i = 0; i < raw_resp_len; i++) {
+        pio_sm_put_blocking(pio, sm, (uint32_t)raw_resp[i] << 24);
+    }
+
+    // Wait for TX FIFO to drain
+    while (!pio_sm_is_tx_fifo_empty(pio, sm))
         tight_loop_contents();
-    // One extra bit-period to let the last word fully clock out.
-    busy_wait_us(2);
 
-    pio_sm_set_enabled(MAPLE_PIO, MAPLE_SM_TX, false);
-    // Return pins to input for the RX SM.
-    pio_sm_set_consecutive_pindirs(MAPLE_PIO, MAPLE_SM_RX,
-                                   PIN_MAPLE_SDCKA, 2, false);
+    // Wait for PIO to stall (all data shifted out)
+    pio0->fdebug = 1u << (PIO_FDEBUG_TXSTALL_LSB + sm);
+    while (!(pio0->fdebug & (1u << (PIO_FDEBUG_TXSTALL_LSB + sm))))
+        tight_loop_contents();
+
+    pio_sm_set_enabled(pio, sm, false);
+
+    // Return pins to input for RX SM
+    pio_sm_set_consecutive_pindirs(pio, sm, PIN_MAPLE_SDCKA, 2, false);
+    gpio_set_function(PIN_MAPLE_SDCKA, GPIO_FUNC_PIO0);
+    gpio_set_function(PIN_MAPLE_SDCKB, GPIO_FUNC_PIO0);
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
@@ -189,8 +293,10 @@ void maple_init(void) {
     uint tx_offset = pio_add_program(MAPLE_PIO, &maple_tx_program);
     rx_offset      = pio_add_program(MAPLE_PIO, &maple_rx_program);
 
-    maple_tx_program_init(MAPLE_PIO, MAPLE_SM_TX, tx_offset, PIN_MAPLE_SDCKA);
-    maple_rx_program_init(MAPLE_PIO, MAPLE_SM_RX, rx_offset, PIN_MAPLE_SDCKA);
+    maple_tx_program_init(MAPLE_PIO, MAPLE_SM_TX, tx_offset,
+                          PIN_MAPLE_SDCKA, MAPLE_TX_CLOCK_DIVIDER);
+    maple_rx_program_init(MAPLE_PIO, MAPLE_SM_RX, rx_offset,
+                          PIN_MAPLE_SDCKA, MAPLE_RX_CLOCK_DIVIDER);
 
     // TX SM starts disabled; RX SM starts enabled watching for SOF.
     pio_sm_set_enabled(MAPLE_PIO, MAPLE_SM_TX, false);
@@ -198,41 +304,27 @@ void maple_init(void) {
 
     vmu_init();
 
-    printf("[maple] init: SDCKA=GP%u SDCKB=GP%u\n",
-           PIN_MAPLE_SDCKA, PIN_MAPLE_SDCKB);
+    printf("[maple] init: SDCKA=GP%u SDCKB=GP%u TX_DIV=%.3f RX_DIV=%.3f\n",
+           PIN_MAPLE_SDCKA, PIN_MAPLE_SDCKB,
+           (double)MAPLE_TX_CLOCK_DIVIDER, (double)MAPLE_RX_CLOCK_DIVIDER);
 }
 
 // ── Main Loop ─────────────────────────────────────────────────────────────────
-// Runs on Core 0.  Tight-polls the PIO RX FIFO — no interrupts, no sleep.
+// Runs on Core 0.  Waits for Maple frames, decodes them, builds and sends responses.
 void __attribute__((noreturn)) __time_critical_func(maple_run)(void) {
     printf("[maple] run loop started\n");
 
     while (true) {
-        // ── 1. Wait for first word (header) ───────────────────────────────────
-        if (pio_sm_is_rx_fifo_empty(MAPLE_PIO, MAPLE_SM_RX)) continue;
+        // ── 1. Receive a complete Maple frame ─────────────────────────────────
+        uint32_t rx_len = rx_receive_frame();
+        if (rx_len < 4) continue;   // timeout or framing error
 
-        rx_buf[0] = pio_sm_get(MAPLE_PIO, MAPLE_SM_RX);
-        maple_header_t *hdr = (maple_header_t *)&rx_buf[0];
+        // ── 2. Build response ─────────────────────────────────────────────────
+        raw_resp_len = 0;
+        handle_command();
 
-        // ── 2. Read payload words ─────────────────────────────────────────────
-        for (uint8_t i = 1; i <= hdr->frame_words; i++)
-            rx_buf[i] = pio_sm_get_blocking(MAPLE_PIO, MAPLE_SM_RX);
-
-        // ── 3. Re-arm RX SM immediately so we don't miss the next SOF ─────────
-        rx_sm_restart();
-
-        // ── 4. Filter: only respond to our own addresses ──────────────────────
-        uint8_t dst = hdr->destination;
-        if (dst != MAPLE_ADDR_CONTROLLER && dst != MAPLE_ADDR_VMU &&
-            dst != (MAPLE_ADDR_CONTROLLER & 0xC0)) {   // also accept 0x20 bare
-            continue;
-        }
-
-        // ── 5. Build response ─────────────────────────────────────────────────
-        handle_command(hdr);
-
-        // ── 6. Transmit ───────────────────────────────────────────────────────
-        if (tx_words > 0)
+        // ── 3. Transmit response ──────────────────────────────────────────────
+        if (raw_resp_len > 0)
             transmit_response();
     }
 }

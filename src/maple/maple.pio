@@ -1,205 +1,195 @@
 ; maple.pio — Maple bus RX and TX PIO programs for RP2350
 ;
+; Based on the dreamwave project by Colin Luoma (c) 2024
+; https://github.com/cluoma/dreamwave
+;
 ; Physical layer:
 ;   SDCKA = pin base,  SDCKB = pin base + 1
 ;   Idle: both HIGH.
-;   Bit '0': SDCKA LOW,  SDCKB HIGH, then both HIGH.
-;   Bit '1': SDCKA HIGH, SDCKB LOW,  then both HIGH.
+;   Bit '0': both LOW, then SDCKA low (phase change on SDCKA)
+;   Bit '1': both LOW, then SDCKB low (phase change on SDCKB)
 ;   Data is MSB-first.
 ;
-; SOF: SDCKB pulses LOW × 4 (while SDCKA stays HIGH), then SDCKA pulses LOW × 1.
-; EOF: SDCKA pulses LOW × 1, then SDCKB pulses LOW × 2.
-;
-; ── RX Clock divider ─────────────────────────────────────────────────────────
-; Run RX SM fast (clk_div ≈ 1) so the poll loop over-samples at >> 2 Mbps.
-; The wait instructions stall until the actual bus transitions occur.
-;
-; ── TX Clock divider ─────────────────────────────────────────────────────────
-; The TX SM uses a pre-encoded stream where each Maple bit = 2 × OUT PINS 2 calls
-; (low-phase pattern, then idle 0b11).  Each call takes 1 PIO cycle, so set:
-;   clk_div = sys_clock_hz / (2 × maple_bit_rate_hz)
-; At 150 MHz and 2 Mbps: clk_div = 37.5  (each OUT = 250 ns = one half-period).
-;
-; TX FIFO word format (shift-left, MSB first):
-;   Each Maple bit becomes 4 bits in the TX FIFO:
-;     bit '0' → 0b01_11  (SDCKA=0,SDCKB=1 for 250 ns, then both=1 for 250 ns)
-;     bit '1' → 0b10_11  (SDCKA=1,SDCKB=0 for 250 ns, then both=1 for 250 ns)
-;   One 32-bit FIFO word carries 8 Maple bits (one byte).
-;   The CPU encodes raw bytes via maple_encode_byte() before pushing to the FIFO.
-;
-;   Pin bit ordering for OUT PINS 2 (with OUT base = SDCKA):
-;     OSR[31] → SDCKA,  OSR[30] → SDCKB
-;   Idle pattern (both HIGH): 0b11
-;   Bit '0' low-phase:        0b01   (SDCKA=0, SDCKB=1)
-;   Bit '1' low-phase:        0b10   (SDCKA=1, SDCKB=0)
-
 ; ─────────────────────────────────────────────────────────────────────────────
 ; maple_rx — receives Maple frames from the Dreamcast
 ; ─────────────────────────────────────────────────────────────────────────────
-; The program runs the SOF detection code once on entry, then loops in the
-; data-bit section via .wrap until the SM is disabled by the CPU.
-;
-; The CPU must:
-;   1. Enable SM, which runs SOF detection then starts pushing bit words.
-;   2. Read header word, determine frame_words.
-;   3. Read (frame_words + 1) more words (payload + CRC word).
-;   4. Disable and restart SM to await the next SOF.
-;
-; Bit value trick: after detecting a line-low edge, sample SDCKA with IN PINS,1.
-;   SDCKA is LOW  → bit '0' → shifts in 0  ✓
-;   SDCKA is HIGH → bit '1' (SDCKB is low) → shifts in 1  ✓
-; No branch needed to distinguish '0' from '1'.
+; Detects edges by comparing current pin state to previous state.
+; Autopushes 8-bit bytes to the RX FIFO.
 
 .program maple_rx
 
-; ── SOF detection (runs once on SM start) ────────────────────────────────────
-    wait 1 pin 0            ; ensure SDCKA idle HIGH
-    wait 1 pin 1            ; ensure SDCKB idle HIGH
-    set x, 3                ; counter: 4 SDCKB pulses (index 3..0)
-sof_b:
-    wait 0 pin 1            ; wait SDCKB LOW
-    wait 1 pin 1            ; wait SDCKB HIGH  (one complete SDCKB pulse)
-    jmp x-- sof_b           ; repeat for remaining pulses
-    wait 0 pin 0            ; wait SDCKA LOW   (final SOF element)
-    wait 1 pin 0            ; wait SDCKA HIGH  → SOF complete
-    set y, 3                ; y = 0b11; preserved as the "both-HIGH" sentinel
+start:
+    wait 1 pin 0
+    wait 1 pin 1
+    mov x pins              ; Read pins
+loop:
+    mov y pins              ; Read pins
+    jmp x!=y check_val      ; Branch if pins changed since last read
+mid_loop:
+    mov x y                 ;
+    jmp loop                ; Pins stayed the same, loop
 
-; ── Data bit sampling (tight-poll loop) ──────────────────────────────────────
-.wrap_target
-poll:
-    mov x, pins             ; read both pins into X
-    jmp x != y, edge        ; exit poll when any pin goes LOW (X ≠ 0b11)
-    jmp poll
-edge:
-    in pins, 1              ; shift SDCKA pin value into ISR (= bit value, see above)
-    wait 1 pin 0            ; wait SDCKA HIGH
-    wait 1 pin 1            ; wait SDCKB HIGH  (both returned — bit period over)
-.wrap                       ; autopush fires every 32 bits
+check_val:
+    jmp !x mid_loop         ; If X is 0, this means that pins changed because of a rising edge, so just return
 
+    jmp y-- not_zero        ; If Y == 0, then both pins are LOW and we get a 0 data bit
+    set x 0                 ; Y was 0
+    jmp send_zero
+
+not_zero:
+    jmp y-- not_one         ; If Y == 1, then 1 pin is HIGH and we get a 1 data bit
+    set x 1
+    jmp send_one
+not_one:
+    jmp y-- not_two         ; If Y == 2, then 1 pin is HIGH and we get a 1 data bit
+    set x 2
+    jmp send_one
+not_two:                    ; Y == 3, so both pins are HIGH, this is meaningless
+    set x 3
+    jmp loop
+
+send_zero:
+    set y 0                 ; Send a 0 to the ISR and go back to checking for pin changes
+    jmp send_bit
+send_one:
+    set y 1                 ; Send a 1 to the ISR and go back to checking for pin changes
+send_bit:
+    in y 1
+    jmp loop
 
 % c-sdk {
 #include "hardware/clocks.h"
+#include "hardware/gpio.h"
 
-static inline void maple_rx_program_init(PIO pio, uint sm, uint offset, uint pin_sdcka) {
+static inline void maple_rx_program_init(PIO pio, uint sm, uint offset, uint pin, float clock_div)
+{
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 2, false);
+
     pio_sm_config c = maple_rx_program_get_default_config(offset);
 
-    sm_config_set_in_pins(&c, pin_sdcka);   // IN PINS base = SDCKA
-    sm_config_set_jmp_pin(&c, pin_sdcka);   // JMP PIN = SDCKA (unused now but set for safety)
-    sm_config_set_in_shift(&c,
-        false,  // shift left: first bit received → ISR MSB → correct MSB-first order
-        true,   // autopush enabled
-        32      // push every 32 bits (one Maple word)
-    );
+    sm_config_set_in_pins(&c, pin); // for WAIT, IN
+    sm_config_set_jmp_pin(&c, pin); // for JMP
 
-    // Run fast to over-sample — transitions are detected by wait instructions.
-    sm_config_set_clkdiv(&c, 1.0f);
+    // Shift to right, autopush enabled after 8 bits
+    sm_config_set_in_shift(&c, false, true, 8);
 
-    // Pins are inputs only.
-    pio_gpio_init(pio, pin_sdcka);
-    pio_gpio_init(pio, pin_sdcka + 1);
-    pio_sm_set_consecutive_pindirs(pio, sm, pin_sdcka, 2, false /*input*/);
+    // Deeper FIFO as we're not doing any TX
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+
+    // Set the state machine clock divider
+    sm_config_set_clkdiv(&c, clock_div);
 
     pio_sm_init(pio, sm, offset, &c);
+
+    // Enable state machine
+    pio_sm_set_enabled(pio, sm, true);
 }
+
+static inline void maple_rx_sm_pause(PIO pio, uint sm)
+{
+    pio_sm_set_enabled(pio, sm, false);
+}
+
+static inline void maple_rx_sm_reset(PIO pio, uint sm)
+{
+    pio_sm_clear_fifos(pio, sm);
+    pio_sm_restart(pio, sm);
+}
+
+static inline void maple_rx_sm_reset_and_resume(PIO pio, uint sm)
+{
+    maple_rx_sm_reset(pio, sm);
+    pio_sm_set_enabled(pio, sm, true);
+}
+
 %}
 
 
 ; ─────────────────────────────────────────────────────────────────────────────
-; maple_tx — sends pre-encoded Maple frames to the Dreamcast
+; maple_tx — sends Maple frames to the Dreamcast
 ; ─────────────────────────────────────────────────────────────────────────────
-; This SM is disabled between frames.  The CPU:
-;   1. Pre-encodes the entire frame (SOF + header + payload + CRC + EOF) into
-;      the TX FIFO using maple_encode_byte() / maple_encode_sof() / _eof().
-;   2. Enables the SM.
-;   3. Waits for the TX FIFO to drain (pio_sm_is_tx_fifo_empty).
-;   4. Disables the SM and re-enables the RX SM.
-;
-; The program is trivially simple — all timing intelligence is in the clock divider
-; and the pre-encoded data stream.
+; The CPU pushes raw bytes to the TX FIFO.  The PIO state machine handles
+; all Maple bus timing: SOP, data bits (phase1/phase2 encoding), and EOP.
+; Clock divider must be set to give correct bit period at the Maple bit rate.
 
 .program maple_tx
 
-.wrap_target
-    out pins, 2             ; drive next 2-bit pin pattern (250 ns at 4 MHz PIO clock)
-.wrap
+start:
+    pull
+    set pins 3 [1]      ; both pins HIGH in preparation for writing
 
+    set y 3
+sop:                    ; send start of packet
+    set pins 2 [3]
+    set pins 0 [3]
+    jmp y-- sop
+    set pins 2 [2]
+    set pins 3 [3]
+
+phase1:                 ; phase 1 - pin 1 is HIGH and pin 2 is LOW
+    out x 1
+    set pins 1 [3]
+    jmp !x phase1_zero
+phase1_one:             ; send a '1' - pin 2 goes HIGH then pin 1 goes LOW
+    set pins 3 [1]
+    set pins 2
+    jmp phase1_reset
+phase1_zero:            ; send a '0' - pin 2 stays LOW and pin 1 goes LOW
+    set pins 0 [2]
+phase1_reset:
+    set pins 2 [1]
+phase2:                 ; phase 2 - pin 1 is LOW and pin 2 is HIGH
+    out x 1
+    set pins 2
+    jmp !x phase2_zero
+phase2_one:             ; send a '1' - pin 1 goes HIGH then pin 2 goes LOW
+    set pins 3 [1]
+    set pins 1
+    jmp phase2_reset
+phase2_zero:            ; send a '0' - pin 1 stays LOW and pin 2 goes LOW
+    set pins 0
+phase2_reset:
+    jmp !osre phase1 [2]    ; trigger end of packet when no more data in output shift register, else keep sending data
+
+eop:                    ; end of packet
+    set pins 3 [5]
+    set pins 1 [3]
+    set pins 0 [3]
+    set pins 1 [3]
+    set pins 0 [3]
+    set pins 1 [2]
 
 % c-sdk {
 #include "hardware/clocks.h"
+#include "hardware/gpio.h"
 
-// Maple bit rate (bits per second)
+// Maple bit rate: 2 Mbps
 #define MAPLE_BIT_RATE_HZ 2000000u
 
-static inline void maple_tx_program_init(PIO pio, uint sm, uint offset, uint pin_sdcka) {
+static inline void maple_tx_program_init(PIO pio, uint sm, uint offset, uint pin, float clock_div)
+{
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 2, false);
+    pio_gpio_init(pio, pin);
+    pio_gpio_init(pio, pin+1);
+
     pio_sm_config c = maple_tx_program_get_default_config(offset);
 
-    sm_config_set_out_pins(&c, pin_sdcka, 2);
-    sm_config_set_out_shift(&c,
-        false,  // shift left: MSB of FIFO word drives pins first
-        true,   // autopull
-        32
-    );
+    sm_config_set_out_pins(&c, pin, 2);
+    sm_config_set_set_pins(&c, pin, 2);
+    sm_config_set_jmp_pin(&c, pin); // for JMP
 
-    // Each OUT PINS 2 call must take exactly one half-bit period (250 ns at 2 Mbps).
-    // clk_div = sys_clk / (2 × bit_rate)
-    float clk_div = (float)clock_get_hz(clk_sys) / (2.0f * MAPLE_BIT_RATE_HZ);
-    sm_config_set_clkdiv(&c, clk_div);
+    // Shift left, autopull enabled after 8 bits
+    sm_config_set_out_shift(&c, false, true, 8);
 
-    // Pins are outputs while TX SM is active.
-    pio_gpio_init(pio, pin_sdcka);
-    pio_gpio_init(pio, pin_sdcka + 1);
-    pio_sm_set_consecutive_pindirs(pio, sm, pin_sdcka, 2, true /*output*/);
+    // Deeper FIFO as we're not doing any RX
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
 
-    // Drive idle (both HIGH) before the SM starts shifting.
-    pio_sm_set_pins_with_mask(pio, sm, 3u << pin_sdcka, 3u << pin_sdcka);
+    // Set the state machine clock divider
+    sm_config_set_clkdiv(&c, clock_div);
 
     pio_sm_init(pio, sm, offset, &c);
+
+    pio_sm_set_enabled(pio, sm, true);
 }
 
-// ── Pre-encoding helpers (call from maple.c) ─────────────────────────────────
-// Each returns a 32-bit word ready to push to the TX FIFO.
-// One word encodes 8 Maple bits.  MSB of the Maple byte is transmitted first.
-//
-// Pin mapping for OSR (shift-left, MSB-first):
-//   OSR[31] → SDCKA,  OSR[30] → SDCKB
-//   Idle:   0b11  Bit '0' low: 0b01  Bit '1' low: 0b10
-
-static inline uint32_t maple_encode_byte(uint8_t byte) {
-    uint32_t word = 0;
-    for (int b = 7; b >= 0; b--) {
-        uint32_t bit = (byte >> b) & 1u;
-        uint32_t low  = bit ? 0b10u : 0b01u;   // SDCKA=bit, SDCKB=!bit
-        word = (word << 4) | (low << 2) | 0b11u; // [low_phase][high_phase]
-    }
-    return word;
-}
-
-// SOF: 4 × SDCKB-low pulses, then 1 × SDCKA-low pulse.
-// Returns 2 words (push both to FIFO in order).
-static inline void maple_encode_sof(uint32_t out[2]) {
-    // Word 0: 4 SDCKB pulses (16 bits) padded with 16 bits of idle at MSB.
-    // SDCKB pulse = 0b10_11 (SDCKA=1,SDCKB=0 then idle).
-    // 4 pulses = 0b10_11_10_11_10_11_10_11 in bits [15:0], idle in [31:16].
-    out[0] = 0xFFFF0000u | 0x0000BBBBu;
-    // 0xBBBB = 0b1011_1011_1011_1011 (four 0b1011 patterns).
-
-    // Word 1: 1 SDCKA pulse (4 bits) then 28 bits idle.
-    // SDCKA pulse = 0b01_11 = 0x7 in 4 bits.
-    // Packed MSB-first: [31:28]=0b0111, [27:0]=idle (0b11 repeated).
-    out[1] = 0x7FFFFFFFu;
-}
-
-// EOF: 1 × SDCKA-low pulse, then 2 × SDCKB-low pulses, then idle.
-// Returns 1 word.
-static inline uint32_t maple_encode_eof(void) {
-    // SDCKA pulse = 0b01_11 = 4 bits.
-    // 2 × SDCKB pulses = 0b10_11_10_11 = 8 bits.
-    // Total signal bits: 12.  Remaining 20 bits: idle.
-    // Packed MSB-first: [31:28]=SDCKA pulse, [27:20]=2 SDCKB pulses, [19:0]=idle.
-    return 0x7BB00000u | 0x000FFFFFu;
-    //      ^^^ 0b0111_1011_1011_0000...  + idle fill
-    // 0x7  = 0b0111 (SDCKA low phase 0b01, high phase 0b11)
-    // 0xBB = 0b1011_1011 (2 × SDCKB pulse)
-    // 0xFFFFF = 20 bits idle (10 × 0b11)
-}
 %}

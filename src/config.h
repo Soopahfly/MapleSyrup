@@ -25,6 +25,14 @@
 #define PIN_SD_RX           12      // MISO
 #define PIN_SD_CS           13
 
+// ── VMU SD Card Pin Aliases ───────────────────────────────────────────────────
+// Matches Pico2Maple hardware pinout for compatibility.
+#define VMU_SD_SCK_PIN      10
+#define VMU_SD_MOSI_PIN     11
+#define VMU_SD_MISO_PIN     12
+#define VMU_SD_CS_PIN       13
+#define VMU_SD_BAUD         (12 * 1000 * 1000)  // 12 MHz
+
 // ── OLED Display (I2C0) ───────────────────────────────────────────────────────
 #define PIN_OLED_SDA        4
 #define PIN_OLED_SCL        5

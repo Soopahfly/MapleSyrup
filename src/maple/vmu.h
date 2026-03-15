@@ -19,11 +19,15 @@
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-// Initialise the in-RAM VMU image (zeroed = blank formatted VMU).
+// Initialise the in-RAM VMU image (0xFF = blank/erased).
 void vmu_init(void);
 
+// Called after sd_init() to attach SD card storage and load the VMU image.
+// If available=true and file not found, a blank 0xFF image is used.
+void vmu_sd_attach(bool available);
+
 // Switch to a different bank slot (0-9).  Saves current bank to SD if available,
-// loads the new bank from SD (or zeros if not present).
+// loads the new bank from SD (or 0xFF if not present).
 void vmu_set_bank(uint8_t bank);
 uint8_t vmu_get_bank(void);
 

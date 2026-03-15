@@ -214,13 +214,20 @@ static void handle_command(void) {
     const uint8_t *payload = rx_bytes + 4;
     uint32_t payload_len   = (uint32_t)frame_words * 4;
 
-    // Filter: only respond to our own addresses
-    if (dest != MAPLE_ADDR_CONTROLLER && dest != MAPLE_ADDR_VMU &&
-        dest != (MAPLE_ADDR_CONTROLLER & 0xC0)) {
+    // Filter: only respond to our own addresses.
+    // MAPLE_ADDR_CONTROLLER = 0x21 (Port A main peripheral, sub1 present).
+    // MAPLE_ADDR_VMU        = 0x01 (Port A sub-peripheral slot 1).
+    // Broadcast address     = 0x00 (all peripherals respond).
+    // Sub-peripheral bit: dest & 0x01 non-zero means addressed to a sub-device.
+    bool is_broadcast   = (dest == MAPLE_ADDR_HOST);
+    bool is_controller  = (dest == MAPLE_ADDR_CONTROLLER);
+    bool is_vmu         = (dest == MAPLE_ADDR_VMU) || (!is_controller && (dest & 0x01));
+    if (!is_broadcast && !is_controller && !is_vmu) {
         return;
     }
 
-    if (dest == MAPLE_ADDR_VMU) {
+    // Route sub-peripheral commands to VMU handler
+    if (is_vmu) {
         raw_resp_len = vmu_handle_command(command, dest, src,
                                           (const uint32_t *)payload,
                                           frame_words, raw_resp);

@@ -29,7 +29,20 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(bluepad32)
 
+# Declare FatFS now (before pico_sdk_init) so it is available, but defer
+# MakeAvailable until after pico_sdk_init() since its CMakeLists.txt calls
+# pico_generate_pio_header which requires the Pico SDK to be initialised.
+FetchContent_Declare(
+    no_os_fatfs
+    GIT_REPOSITORY https://github.com/carlk3/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico.git
+    GIT_TAG        main
+    SOURCE_SUBDIR  src
+)
+
 pico_sdk_init()
+
+# ── no-OS-FatFS SD/SPI driver (must be after pico_sdk_init) ──────────────────
+FetchContent_MakeAvailable(no_os_fatfs)
 
 # Bluepad32 needs btstack_config.h and sdkconfig.h at compile time.
 # These live in src/ — propagate to the bluepad32 static-library target.
@@ -49,6 +62,7 @@ add_executable(bt2maple
     src/bluetooth/bt.c
     src/bluetooth/hid_map.c
     src/display/oled.c
+    src/storage/sd_card.c
 )
 
 pico_generate_pio_header(bt2maple ${CMAKE_CURRENT_LIST_DIR}/src/maple/maple.pio)
@@ -62,6 +76,13 @@ target_include_directories(bt2maple PRIVATE
     ${BTSTACK_ROOT}/src
     ${BTSTACK_ROOT}/3rd-party/bluedroid/encoder/include
     ${BTSTACK_ROOT}/3rd-party/bluedroid/decoder/include
+    # no-OS-FatFS headers
+    ${no_os_fatfs_SOURCE_DIR}/src
+    ${no_os_fatfs_SOURCE_DIR}/src/ff15
+    ${no_os_fatfs_SOURCE_DIR}/src/ff15/source
+    ${no_os_fatfs_SOURCE_DIR}/src/sd_driver
+    ${no_os_fatfs_SOURCE_DIR}/src/sd_driver/SPI
+    ${no_os_fatfs_SOURCE_DIR}/src/include
 )
 
 # Bluepad32 also needs to find sdkconfig.h / btstack_config.h from src/
@@ -94,6 +115,7 @@ target_link_libraries(bt2maple
     pico_btstack_cyw43
     pico_cyw43_arch_none
     bluepad32
+    no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
 )
 
 pico_enable_stdio_usb(bt2maple 1)

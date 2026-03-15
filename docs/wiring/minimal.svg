@@ -1,0 +1,161 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 620" width="900" height="620" font-family="monospace, sans-serif">
+
+  <!-- Background -->
+  <rect width="900" height="620" fill="#1a1a2e"/>
+
+  <!-- Title -->
+  <text x="450" y="35" text-anchor="middle" fill="#e0e0e0" font-size="20" font-weight="bold">MapleSyrup — Minimal Wiring (Maple Bus Only)</text>
+  <text x="450" y="55" text-anchor="middle" fill="#888" font-size="12">Pico 2 W + Dreamcast controller port extension cable</text>
+
+  <!-- ===================== PICO 2 W ===================== -->
+  <g id="pico">
+    <!-- Board body -->
+    <rect x="290" y="80" width="160" height="440" rx="8" fill="#2d5a1b" stroke="#4a9c2a" stroke-width="2"/>
+    <text x="370" y="105" text-anchor="middle" fill="#a0e060" font-size="13" font-weight="bold">Pico 2 W</text>
+    <text x="370" y="120" text-anchor="middle" fill="#6ab04a" font-size="10">(RP2350)</text>
+
+    <!-- USB connector at top -->
+    <rect x="345" y="78" width="50" height="12" rx="3" fill="#888" stroke="#aaa" stroke-width="1"/>
+    <text x="370" y="88" text-anchor="middle" fill="#333" font-size="8">USB</text>
+
+    <!-- Left pins (odd: GP0..GP22 area) -->
+    <!-- Pin rows: y starts at 135, step 20 -->
+    <!-- Left side pins -->
+    <g fill="#c8a020" font-size="10">
+      <!-- GP0  --> <rect x="270" y="133" width="22" height="10" rx="2"/><text x="268" y="141" text-anchor="end" fill="#888" font-size="9">GP0</text>
+      <!-- GP1  --> <rect x="270" y="153" width="22" height="10" rx="2"/><text x="268" y="161" text-anchor="end" fill="#888" font-size="9">GP1</text>
+      <!-- GND  --> <rect x="270" y="173" width="22" height="10" rx="2" fill="#444"/><text x="268" y="181" text-anchor="end" fill="#aaa" font-size="9">GND</text>
+      <!-- GP2  --> <rect x="270" y="193" width="22" height="10" rx="2"/><text x="268" y="201" text-anchor="end" fill="#888" font-size="9">GP2</text>
+      <!-- GP3  --> <rect x="270" y="213" width="22" height="10" rx="2"/><text x="268" y="221" text-anchor="end" fill="#888" font-size="9">GP3</text>
+      <!-- GP4  --> <rect x="270" y="233" width="22" height="10" rx="2"/><text x="268" y="241" text-anchor="end" fill="#888" font-size="9">GP4</text>
+      <!-- GP5  --> <rect x="270" y="253" width="22" height="10" rx="2"/><text x="268" y="261" text-anchor="end" fill="#888" font-size="9">GP5</text>
+      <!-- GND  --> <rect x="270" y="273" width="22" height="10" rx="2" fill="#444"/><text x="268" y="281" text-anchor="end" fill="#aaa" font-size="9">GND</text>
+      <!-- GP6  --> <rect x="270" y="293" width="22" height="10" rx="2"/><text x="268" y="301" text-anchor="end" fill="#888" font-size="9">GP6</text>
+      <!-- GP7  --> <rect x="270" y="313" width="22" height="10" rx="2"/><text x="268" y="321" text-anchor="end" fill="#888" font-size="9">GP7</text>
+      <!-- GP8  --> <rect x="270" y="333" width="22" height="10" rx="2"/><text x="268" y="341" text-anchor="end" fill="#888" font-size="9">GP8</text>
+      <!-- GP9  --> <rect x="270" y="353" width="22" height="10" rx="2"/><text x="268" y="361" text-anchor="end" fill="#888" font-size="9">GP9</text>
+      <!-- GND  --> <rect x="270" y="373" width="22" height="10" rx="2" fill="#444"/><text x="268" y="381" text-anchor="end" fill="#aaa" font-size="9">GND</text>
+      <!-- GP10 --> <rect x="270" y="393" width="22" height="10" rx="2"/><text x="268" y="401" text-anchor="end" fill="#888" font-size="9">GP10</text>
+      <!-- GP11 --> <rect x="270" y="413" width="22" height="10" rx="2"/><text x="268" y="421" text-anchor="end" fill="#888" font-size="9">GP11</text>
+      <!-- GP12 --> <rect x="270" y="433" width="22" height="10" rx="2"/><text x="268" y="441" text-anchor="end" fill="#888" font-size="9">GP12</text>
+      <!-- GP13 --> <rect x="270" y="453" width="22" height="10" rx="2"/><text x="268" y="461" text-anchor="end" fill="#888" font-size="9">GP13</text>
+      <!-- GND  --> <rect x="270" y="473" width="22" height="10" rx="2" fill="#444"/><text x="268" y="481" text-anchor="end" fill="#aaa" font-size="9">GND</text>
+    </g>
+
+    <!-- Right side pins -->
+    <g fill="#c8a020" font-size="10">
+      <!-- VSYS --> <rect x="448" y="133" width="22" height="10" rx="2" fill="#c04040"/><text x="472" y="141" fill="#e06060" font-size="9">VSYS</text>
+      <!-- GND  --> <rect x="448" y="153" width="22" height="10" rx="2" fill="#444"/><text x="472" y="161" fill="#aaa" font-size="9">GND</text>
+      <!-- 3V3  --> <rect x="448" y="173" width="22" height="10" rx="2" fill="#8b4513"/><text x="472" y="181" fill="#cd853f" font-size="9">3V3</text>
+      <!-- GP28 --> <rect x="448" y="193" width="22" height="10" rx="2"/><text x="472" y="201" fill="#888" font-size="9">GP28</text>
+      <!-- GP27 --> <rect x="448" y="213" width="22" height="10" rx="2"/><text x="472" y="221" fill="#888" font-size="9">GP27</text>
+      <!-- GP26 --> <rect x="448" y="233" width="22" height="10" rx="2"/><text x="472" y="241" fill="#888" font-size="9">GP26</text>
+      <!-- GND  --> <rect x="448" y="253" width="22" height="10" rx="2" fill="#444"/><text x="472" y="261" fill="#aaa" font-size="9">GND</text>
+      <!-- GP22 --> <rect x="448" y="273" width="22" height="10" rx="2"/><text x="472" y="281" fill="#888" font-size="9">GP22</text>
+      <!-- GP21 --> <rect x="448" y="293" width="22" height="10" rx="2"/><text x="472" y="301" fill="#888" font-size="9">GP21</text>
+      <!-- GP20 --> <rect x="448" y="313" width="22" height="10" rx="2"/><text x="472" y="321" fill="#888" font-size="9">GP20</text>
+      <!-- GP19 --> <rect x="448" y="333" width="22" height="10" rx="2"/><text x="472" y="341" fill="#888" font-size="9">GP19</text>
+      <!-- GP18 --> <rect x="448" y="353" width="22" height="10" rx="2"/><text x="472" y="361" fill="#888" font-size="9">GP18</text>
+      <!-- GND  --> <rect x="448" y="373" width="22" height="10" rx="2" fill="#444"/><text x="472" y="381" fill="#aaa" font-size="9">GND</text>
+      <!-- GP17 SDCKB highlighted --> <rect x="448" y="393" width="22" height="10" rx="2" fill="#1a5c8a"/><text x="472" y="401" fill="#60b8f0" font-size="9" font-weight="bold">GP17</text>
+      <!-- GP16 SDCKA highlighted --> <rect x="448" y="413" width="22" height="10" rx="2" fill="#1a5c8a"/><text x="472" y="421" fill="#60b8f0" font-size="9" font-weight="bold">GP16</text>
+      <!-- GP15 --> <rect x="448" y="433" width="22" height="10" rx="2"/><text x="472" y="441" fill="#888" font-size="9">GP15</text>
+      <!-- GP14 --> <rect x="448" y="453" width="22" height="10" rx="2"/><text x="472" y="461" fill="#888" font-size="9">GP14</text>
+      <!-- GND  --> <rect x="448" y="473" width="22" height="10" rx="2" fill="#444"/><text x="472" y="481" fill="#aaa" font-size="9">GND</text>
+    </g>
+
+    <!-- Pico chip -->
+    <rect x="325" y="200" width="90" height="60" rx="4" fill="#1a1a1a" stroke="#555" stroke-width="1"/>
+    <text x="370" y="227" text-anchor="middle" fill="#666" font-size="9">RP2350</text>
+    <text x="370" y="240" text-anchor="middle" fill="#666" font-size="9">CYW43439</text>
+
+    <!-- Antenna label -->
+    <text x="370" y="510" text-anchor="middle" fill="#6ab04a" font-size="9">▲ BT Antenna</text>
+  </g>
+
+  <!-- ===================== DREAMCAST CONNECTOR ===================== -->
+  <g id="dreamcast">
+    <rect x="30" y="200" width="170" height="180" rx="8" fill="#1e1e3a" stroke="#4040a0" stroke-width="2"/>
+    <text x="115" y="225" text-anchor="middle" fill="#8080e0" font-size="13" font-weight="bold">Dreamcast</text>
+    <text x="115" y="242" text-anchor="middle" fill="#6060b0" font-size="11">Extension Cable</text>
+    <text x="115" y="258" text-anchor="middle" fill="#505090" font-size="10">(cut &amp; tap)</text>
+
+    <!-- Connector face diagram -->
+    <ellipse cx="115" cy="310" rx="55" ry="35" fill="#111" stroke="#4040a0" stroke-width="2"/>
+    <!-- 5 pins in trapezoid layout -->
+    <circle cx="90"  cy="305" r="6" fill="#c04040" stroke="#e06060" stroke-width="1.5"/>
+    <text x="90"  cy="305" text-anchor="middle" fill="#e06060" font-size="8" dy="3">1</text>
+    <circle cx="110" cy="298" r="6" fill="#60a060" stroke="#80c080" stroke-width="1.5"/>
+    <text x="110" cy="298" text-anchor="middle" fill="#80c080" font-size="8" dy="3">2</text>
+    <circle cx="115" cy="318" r="6" fill="#444" stroke="#888" stroke-width="1.5"/>
+    <text x="115" cy="318" text-anchor="middle" fill="#aaa" font-size="8" dy="3">3</text>
+    <circle cx="130" cy="305" r="6" fill="#4080c0" stroke="#60a0e0" stroke-width="1.5"/>
+    <text x="130" cy="305" text-anchor="middle" fill="#60a0e0" font-size="8" dy="3">4</text>
+    <circle cx="140" cy="295" r="6" fill="#555" stroke="#999" stroke-width="1.5"/>
+    <text x="140" cy="295" text-anchor="middle" fill="#bbb" font-size="8" dy="3">5</text>
+
+    <!-- Pin legend -->
+    <text x="40" y="358" fill="#e06060" font-size="10">● Pin 1: +5V</text>
+    <text x="40" y="373" fill="#80c080" font-size="10">● Pin 2: SDCKA</text>
+    <text x="40" y="388" fill="#888"    font-size="10">● Pin 3: GND</text>
+  </g>
+
+  <!-- Dreamcast pin 4 and 5 legend below connector box -->
+  <text x="40" y="398" fill="#60a0e0" font-size="10">● Pin 4: SDCKB</text>
+  <text x="40" y="413" fill="#999"    font-size="10">● Pin 5: Sense (leave)</text>
+
+  <!-- ===================== WIRES ===================== -->
+  <!-- +5V: DC pin1 → Pico VSYS (right side row 1 = y=138) -->
+  <polyline points="145,308 220,308 220,138 448,138" fill="none" stroke="#e06060" stroke-width="2" stroke-dasharray="6,3"/>
+  <text x="200" y="128" fill="#e06060" font-size="10">+5V → VSYS</text>
+
+  <!-- SDCKA: DC pin2 → GP16 (right y=418) -->
+  <polyline points="145,302 240,302 240,418 448,418" fill="none" stroke="#80c080" stroke-width="2"/>
+  <text x="195" y="435" fill="#80c080" font-size="10">SDCKA → GP16</text>
+
+  <!-- GND: DC pin3 → GND (right y=478) -->
+  <polyline points="145,320 232,320 232,478 448,478" fill="none" stroke="#888" stroke-width="2"/>
+
+  <!-- SDCKB: DC pin4 → GP17 (right y=398) -->
+  <polyline points="145,308 250,308 250,398 448,398" fill="none" stroke="#60a0e0" stroke-width="2"/>
+  <text x="195" y="455" fill="#60a0e0" font-size="10">SDCKB → GP17</text>
+
+  <!-- GND label on wire -->
+  <text x="195" y="475" fill="#888" font-size="10">GND  → GND</text>
+
+  <!-- ===================== NOTES ===================== -->
+  <rect x="550" y="80" width="320" height="280" rx="8" fill="#0d0d1f" stroke="#333" stroke-width="1"/>
+  <text x="710" y="105" text-anchor="middle" fill="#e0e0e0" font-size="13" font-weight="bold">Notes</text>
+
+  <text x="568" y="130" fill="#e0e0e0" font-size="11" font-weight="bold">Dreamcast cable prep:</text>
+  <text x="568" y="148" fill="#aaa" font-size="10">1. Buy a DC controller extension cable</text>
+  <text x="568" y="163" fill="#aaa" font-size="10">2. Cut the cable in the middle</text>
+  <text x="568" y="178" fill="#aaa" font-size="10">3. Strip and identify the 5 wires</text>
+  <text x="568" y="193" fill="#aaa" font-size="10">4. Plug the console-side end into DC</text>
+  <text x="568" y="208" fill="#aaa" font-size="10">5. Solder the 4 wires to the Pico</text>
+
+  <text x="568" y="235" fill="#e0e0e0" font-size="11" font-weight="bold">Wire colours (vary by cable):</text>
+  <text x="568" y="253" fill="#aaa" font-size="10">Use a multimeter to confirm pinout</text>
+  <text x="568" y="268" fill="#aaa" font-size="10">before connecting to the Pico.</text>
+
+  <text x="568" y="295" fill="#e0e0e0" font-size="11" font-weight="bold">Power:</text>
+  <text x="568" y="313" fill="#aaa" font-size="10">VSYS accepts 5V directly from</text>
+  <text x="568" y="328" fill="#aaa" font-size="10">the DC port. Do NOT use 3V3 pin.</text>
+  <text x="568" y="343" fill="#ffcc00" font-size="10">⚠ Pico logic is 3.3V — Maple</text>
+  <text x="568" y="358" fill="#ffcc00" font-size="10">  signals must not exceed 3.3V.</text>
+
+  <!-- Flash instructions -->
+  <rect x="550" y="380" width="320" height="180" rx="8" fill="#0d0d1f" stroke="#333" stroke-width="1"/>
+  <text x="710" y="405" text-anchor="middle" fill="#e0e0e0" font-size="13" font-weight="bold">Flashing bt2maple.uf2</text>
+  <text x="568" y="428" fill="#aaa" font-size="10">1. Hold BOOTSEL button on Pico 2 W</text>
+  <text x="568" y="445" fill="#aaa" font-size="10">2. Plug in USB — drive mounts as RPI-RP2</text>
+  <text x="568" y="462" fill="#aaa" font-size="10">3. Drag bt2maple.uf2 onto the drive</text>
+  <text x="568" y="479" fill="#aaa" font-size="10">4. Pico reboots automatically</text>
+  <text x="568" y="496" fill="#aaa" font-size="10">5. Put Dreamcast controller port in BT</text>
+  <text x="568" y="513" fill="#aaa" font-size="10">   pairing mode and power on DC</text>
+  <text x="568" y="530" fill="#4a9c2a" font-size="10">✓ Controller should pair automatically</text>
+  <text x="568" y="547" fill="#4a9c2a" font-size="10">  on next boot</text>
+
+  <!-- Footer -->
+  <text x="450" y="600" text-anchor="middle" fill="#555" font-size="10">github.com/Soopahfly/MapleSyrup</text>
+</svg>

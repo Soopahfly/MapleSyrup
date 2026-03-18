@@ -129,20 +129,22 @@ void config_store_load(void) {
         return;
     }
 
-    MapleSyrupConfig loaded = {0};
+    // Decode directly into s_cfg (already initialised with defaults).
+    // Avoids placing a ~3 KB MapleSyrupConfig on the 2 KB Pico stack.
     pb_istream_t stream = pb_istream_from_buffer(flash + 8, pb_len);
-    if (!pb_decode(&stream, MapleSyrupConfig_fields, &loaded)) {
+    if (!pb_decode(&stream, MapleSyrupConfig_fields, &s_cfg)) {
         printf("[config] Decode failed: %s — using defaults\n", stream.errmsg);
+        apply_defaults();
         return;
     }
 
-    if (loaded.config_version != CONFIG_VERSION) {
+    if (s_cfg.config_version != CONFIG_VERSION) {
         printf("[config] Version mismatch (stored=%u, current=%u) — using defaults\n",
-               (unsigned)loaded.config_version, CONFIG_VERSION);
+               (unsigned)s_cfg.config_version, CONFIG_VERSION);
+        apply_defaults();
         return;
     }
 
-    s_cfg = loaded;
     if (!s_cfg.has_gpio)   s_cfg.gpio   = (GpioConfig)GpioConfig_init_default;
     if (!s_cfg.has_global) s_cfg.global = (GlobalConfig)GlobalConfig_init_default;
     s_cfg.has_gpio   = true;

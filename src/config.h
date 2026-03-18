@@ -25,8 +25,12 @@
 #define PIN_SD_RX           12      // MISO
 #define PIN_SD_CS           13
 
+// ── Config Mode Button ────────────────────────────────────────────────────────
+// Hold LOW at boot (short to GND) to enter the web config console.
+// Internal pull-up is enabled; idle state = HIGH (not pressed).
+#define PIN_MODE_BTN        22
+
 // ── VMU SD Card Pin Aliases ───────────────────────────────────────────────────
-// Matches Pico2Maple hardware pinout for compatibility.
 #define VMU_SD_SCK_PIN      10
 #define VMU_SD_MOSI_PIN     11
 #define VMU_SD_MISO_PIN     12

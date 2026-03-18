@@ -1,6 +1,7 @@
 #include "vmu.h"
 #include "maple.h"
 #include "storage/sd_card.h"
+#include "config_store.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -162,15 +163,27 @@ bool vmu_lcd_dirty(void) {
 }
 
 void vmu_on_game_id(const uint8_t *game_id, uint8_t len) {
-    // FNV-1a hash of the game ID bytes → bank index 0-9.
-    // Same game always maps to the same bank; different games rarely collide.
+    // FNV-1a hash of the game ID bytes.
     uint32_t hash = 2166136261u;  // FNV offset basis
     for (uint8_t i = 0; i < len; i++) {
         hash ^= game_id[i];
         hash *= 16777619u;  // FNV prime
     }
-    uint8_t bank = (uint8_t)(hash % VMU_NUM_BANKS);
-    printf("[vmu] game ID (%u bytes) → bank %u\n", len, bank);
+
+    // Expose hash for hid_map.c to look up per-game button config.
+    g_current_game_hash = hash;
+
+    // Check for a per-game VMU bank override stored in config.
+    uint8_t bank;
+    game_cfg_t *gc = config_game_by_hash(hash);
+    if (gc && gc->vmu_bank != 0xFF) {
+        bank = gc->vmu_bank;
+    } else {
+        bank = (uint8_t)(hash % VMU_NUM_BANKS);
+    }
+
+    printf("[vmu] game ID (%u bytes) hash=%08lX → bank %u\n",
+           len, (unsigned long)hash, bank);
     if (bank != g_bank)
         vmu_set_bank(bank);
 }

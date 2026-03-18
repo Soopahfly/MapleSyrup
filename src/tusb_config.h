@@ -1,6 +1,12 @@
 #pragma once
-// TinyUSB host-mode configuration for bt2maple on Pico 2 W (RP2350).
-// USB is used exclusively in host mode — stdio is routed to UART (GP0/GP1).
+// TinyUSB device-mode configuration for bt2maple on Pico 2 W (RP2350).
+//
+// USB is in CDC device mode — used for the web config console (pico_stdio_usb).
+// Debug output also goes to UART on GP0/GP1.
+//
+// NOTE: TinyUSB cannot simultaneously be in host and device mode on one USB
+// controller.  Wired USB controller host support is reserved for a future
+// release (will require hardware changes or a second USB controller).
 
 #ifndef _TUSB_CONFIG_H_
 #define _TUSB_CONFIG_H_
@@ -9,74 +15,37 @@
 extern "C" {
 #endif
 
-//--------------------------------------------------------------------
-// Common
-//--------------------------------------------------------------------
-
-// MCU is set by the SDK's family.cmake: OPT_MCU_RP2040 (used for both RP2040 and RP2350)
+// MCU supplied by SDK family.cmake
 #ifndef CFG_TUSB_MCU
 #error CFG_TUSB_MCU must be defined by the build system
 #endif
 
-// Use Pico SDK's built-in OS integration
 #ifndef CFG_TUSB_OS
-#define CFG_TUSB_OS           OPT_OS_PICO
+#define CFG_TUSB_OS     OPT_OS_PICO
 #endif
 
 #ifndef CFG_TUSB_DEBUG
-#define CFG_TUSB_DEBUG        0
+#define CFG_TUSB_DEBUG  0
 #endif
 
-// DMA-aligned buffers — RP2350 requires 4-byte alignment
-#ifndef CFG_TUH_MEM_SECTION
-#define CFG_TUH_MEM_SECTION
-#endif
+// ── Device mode ───────────────────────────────────────────────────────────────
+// RHPORT0 = RP2350 native USB hardware, device mode, full speed
+#define CFG_TUSB_RHPORT0_MODE   (OPT_MODE_DEVICE | OPT_MODE_FULL_SPEED)
+#define CFG_TUD_ENABLED         1
 
-#ifndef CFG_TUH_MEM_ALIGN
-#define CFG_TUH_MEM_ALIGN     __attribute__ ((aligned(4)))
-#endif
+// CDC virtual serial port (used by pico_stdio_usb / config console)
+#define CFG_TUD_CDC             1
+#define CFG_TUD_CDC_RX_BUFSIZE  512
+#define CFG_TUD_CDC_TX_BUFSIZE  512
 
-//--------------------------------------------------------------------
-// HOST mode — device mode is not used (USB is host only)
-//--------------------------------------------------------------------
+// Unused device classes
+#define CFG_TUD_MSC             0
+#define CFG_TUD_HID             0
+#define CFG_TUD_MIDI            0
+#define CFG_TUD_VENDOR          0
 
-// Enable TinyUSB host stack
-#define CFG_TUH_ENABLED       1
-
-// Root hub port: 0 for the native RP2350 USB controller
-#ifndef BOARD_TUH_RHPORT
-#define BOARD_TUH_RHPORT      0
-#endif
-
-// Use full-speed (USB 1.1) — matches wired gamepads
-#ifndef BOARD_TUH_MAX_SPEED
-#define BOARD_TUH_MAX_SPEED   OPT_MODE_FULL_SPEED
-#endif
-
-#define CFG_TUH_MAX_SPEED     BOARD_TUH_MAX_SPEED
-
-//--------------------------------------------------------------------
-// Driver configuration
-//--------------------------------------------------------------------
-
-// Descriptor enumeration scratch buffer
-#define CFG_TUH_ENUMERATION_BUFSIZE 256
-
-// Support up to 4 HID interfaces (1 controller = typically 1 interface)
-#define CFG_TUH_HID                 4
-
-// HID endpoint buffer sizes
-#define CFG_TUH_HID_EPIN_BUFSIZE    64
-#define CFG_TUH_HID_EPOUT_BUFSIZE   64
-
-// Max devices (no hub needed for direct controller connection)
-#define CFG_TUH_DEVICE_MAX          4
-
-// No hub, CDC, MSC or vendor needed for gamepad use
-#define CFG_TUH_HUB                 0
-#define CFG_TUH_CDC                 0
-#define CFG_TUH_MSC                 0
-#define CFG_TUH_VENDOR              0
+// ── Host mode (disabled) ──────────────────────────────────────────────────────
+#define CFG_TUH_ENABLED         0
 
 #ifdef __cplusplus
 }

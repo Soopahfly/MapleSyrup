@@ -64,12 +64,14 @@ target_compile_definitions(bluepad32 PRIVATE NDEBUG)
 add_executable(bt2maple
     src/main.c
     src/controller.c
+    src/config_store.c
     src/maple/maple.c
     src/maple/vmu.c
     src/bluetooth/bt.c
     src/bluetooth/hid_map.c
     src/display/oled.c
     src/storage/sd_card.c
+    src/webconfig/webconfig.c
     # src/usb/usb_host.c  # disabled while validating BT — re-enable with tinyusb libs
 )
 
@@ -119,6 +121,8 @@ target_link_libraries(bt2maple
     hardware_i2c
     hardware_pwm
     hardware_spi
+    hardware_flash
+    hardware_watchdog
     pico_btstack_classic
     pico_btstack_cyw43
     pico_cyw43_arch_none
@@ -130,8 +134,10 @@ target_link_libraries(bt2maple
     # tinyusb_board
 )
 
-# USB is in host mode — stdio must use UART (GP0 TX / GP1 RX)
-pico_enable_stdio_usb(bt2maple 0)
+# Enable both UART and USB CDC stdio.
+# UART (GP0 TX / GP1 RX) carries debug output.
+# USB CDC also active — used as the config-mode console when PIN_MODE_BTN is held.
+pico_enable_stdio_usb(bt2maple 1)
 pico_enable_stdio_uart(bt2maple 1)
 
 pico_add_extra_outputs(bt2maple)

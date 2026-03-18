@@ -5,14 +5,23 @@
 // ── Config Mode Entry Point ───────────────────────────────────────────────────
 //
 // Called from main() when PIN_MODE_BTN is held low at boot.
-// Serves an interactive config menu over USB CDC serial (stdin/stdout).
 //
-// Protocol: newline-terminated text commands, responses end with "OK" or "ERR".
-// Also parseable by tools/webconfig.html via the Web Serial API in Chrome.
+// The Pico W CYW43 creates a WiFi access point "MapleSyrup" (open, no password).
+// An HTTP server runs at http://192.168.7.1 serving the embedded config UI.
+// Any browser on any OS works — navigate to 192.168.7.1 after connecting to
+// the "MapleSyrup" WiFi network.
 //
-// sd_available: true if SD card was successfully mounted (used to report
-//               which VMU bank files exist on the card).
+// API endpoints served:
+//   GET  /            HTML config UI
+//   GET  /api/config  Current global config (JSON)
+//   POST /api/config  Apply global config (JSON body)
+//   GET  /api/games   All game configs (JSON array)
+//   GET  /api/games/:hash  Single game config
+//   POST /api/games   Upsert or delete a game config
+//   POST /api/save    Write config to flash
+//   POST /api/reboot  Save + watchdog reboot
 //
-// Never returns — either awaits a "reboot" command (calls watchdog_reboot)
-// or the user power-cycles the device.
+// sd_available: currently unused — reserved for future SD mount status reporting.
+//
+// Never returns.
 void __attribute__((noreturn)) webconfig_run(bool sd_available);

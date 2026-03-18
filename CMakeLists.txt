@@ -72,6 +72,7 @@ add_executable(bt2maple
     src/display/oled.c
     src/storage/sd_card.c
     src/webconfig/webconfig.c
+    src/webconfig/dhcpserver.c
     # src/usb/usb_host.c  # disabled while validating BT — re-enable with tinyusb libs
 )
 
@@ -79,6 +80,7 @@ pico_generate_pio_header(bt2maple ${CMAKE_CURRENT_LIST_DIR}/src/maple/maple.pio)
 
 target_include_directories(bt2maple PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/src
+    ${CMAKE_CURRENT_LIST_DIR}/src/webconfig
     ${CMAKE_CURRENT_LIST_DIR}
     # Bluepad32 public headers
     ${bluepad32_SOURCE_DIR}/include
@@ -125,11 +127,14 @@ target_link_libraries(bt2maple
     hardware_watchdog
     pico_btstack_classic
     pico_btstack_cyw43
-    pico_cyw43_arch_none
+    # pico_cyw43_arch_none internally uses threadsafe_background (see SDK CMakeLists),
+    # so pico_btstack_cyw43 is already compatible with threadsafe_background.
+    # We just add lwIP on top by switching to the lwip_threadsafe_background variant —
+    # the BT HCI and WiFi interfaces are separate subsystems within the CYW43 chip.
+    pico_cyw43_arch_lwip_threadsafe_background
     bluepad32
     no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
     # tinyusb_host and tinyusb_board re-enabled when USB host is restored
-    # tinyusb_board runs USB hardware init at startup which conflicts with CYW43
     # tinyusb_host
     # tinyusb_board
 )

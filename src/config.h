@@ -45,6 +45,14 @@
 #define OLED_WIDTH          128
 #define OLED_HEIGHT         64
 
+// ── OLED Controller Selection ─────────────────────────────────────────────────
+// 0 = SSD1306 (default — most 0.96" and some 1.3" modules)
+// 1 = SH1106  (most 1.3" modules — same resolution, page-addressed GRAM)
+// Future: selectable at runtime via web config UI.
+#ifndef OLED_SH1106
+#define OLED_SH1106         0
+#endif
+
 // ── VMU Buzzer ────────────────────────────────────────────────────────────────
 #define PIN_BUZZER          26      // PWM slice 5 channel A
 

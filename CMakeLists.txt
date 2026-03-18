@@ -156,10 +156,10 @@ target_link_libraries(bt2maple
     # tinyusb_board
 )
 
-# Enable both UART and USB CDC stdio.
-# UART (GP0 TX / GP1 RX) carries debug output.
-# USB CDC also active — used as the config-mode console when PIN_MODE_BTN is held.
-pico_enable_stdio_usb(bt2maple 1)
+# UART stdio only — the adapter presents no USB interfaces to the host.
+# Web config runs over the CYW43 WiFi AP (192.168.7.1); no USB serial needed.
+# Connect a 3.3 V USB-serial adapter to GP0 TX / GP1 RX at 115200 to see debug output.
+pico_enable_stdio_usb(bt2maple 0)
 pico_enable_stdio_uart(bt2maple 1)
 
 pico_add_extra_outputs(bt2maple)

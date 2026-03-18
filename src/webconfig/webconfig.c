@@ -291,10 +291,8 @@ static void dispatch(char *line) {
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 void __attribute__((noreturn)) webconfig_run(bool sd_available) {
-    // Wait up to 5 s for USB serial host to connect
-    uint32_t deadline = to_ms_since_boot(get_absolute_time()) + 5000;
-    while (!stdio_usb_connected() && to_ms_since_boot(get_absolute_time()) < deadline)
-        sleep_ms(50);
+    // No USB serial — output goes to UART (GP0/GP1 at 115200).
+    // No connection handshake needed.
 
     printf("\n");
     printf("========================================\n");

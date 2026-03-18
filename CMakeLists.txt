@@ -12,6 +12,13 @@ include(${PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 project(bt2maple C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 
+# ── Version ───────────────────────────────────────────────────────────────────
+set(BT2MAPLE_VERSION_MAJOR 0)
+set(BT2MAPLE_VERSION_MINOR 2)
+set(BT2MAPLE_VERSION_PATCH 0)
+set(BT2MAPLE_VERSION "${BT2MAPLE_VERSION_MAJOR}.${BT2MAPLE_VERSION_MINOR}.${BT2MAPLE_VERSION_PATCH}")
+message(STATUS "bt2maple version: ${BT2MAPLE_VERSION}")
+
 # ── Bluepad32 via FetchContent ─────────────────────────────────────────────────
 # Must be declared before pico_sdk_init() so that BTSTACK_ROOT can be set to
 # the Pico SDK's bundled btstack (matching what CYW43 arch expects).
@@ -63,7 +70,7 @@ add_executable(bt2maple
     src/bluetooth/hid_map.c
     src/display/oled.c
     src/storage/sd_card.c
-    src/usb/usb_host.c
+    # src/usb/usb_host.c  # disabled while validating BT — re-enable with tinyusb libs
 )
 
 pico_generate_pio_header(bt2maple ${CMAKE_CURRENT_LIST_DIR}/src/maple/maple.pio)
@@ -117,8 +124,10 @@ target_link_libraries(bt2maple
     pico_cyw43_arch_none
     bluepad32
     no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
-    tinyusb_host
-    tinyusb_board
+    # tinyusb_host and tinyusb_board re-enabled when USB host is restored
+    # tinyusb_board runs USB hardware init at startup which conflicts with CYW43
+    # tinyusb_host
+    # tinyusb_board
 )
 
 # USB is in host mode — stdio must use UART (GP0 TX / GP1 RX)
@@ -126,3 +135,17 @@ pico_enable_stdio_usb(bt2maple 0)
 pico_enable_stdio_uart(bt2maple 1)
 
 pico_add_extra_outputs(bt2maple)
+
+# ── Embed version info into binary (readable via picotool info) ───────────────
+pico_set_program_name(bt2maple "bt2maple")
+pico_set_program_version(bt2maple "${BT2MAPLE_VERSION}")
+pico_set_program_description(bt2maple "Bluetooth/USB to Dreamcast Maple bus adapter")
+pico_set_program_url(bt2maple "https://github.com/Soopahfly/MapleSyrup")
+
+# Pass version to C code for runtime reporting
+target_compile_definitions(bt2maple PRIVATE
+    BT2MAPLE_VERSION_MAJOR=${BT2MAPLE_VERSION_MAJOR}
+    BT2MAPLE_VERSION_MINOR=${BT2MAPLE_VERSION_MINOR}
+    BT2MAPLE_VERSION_PATCH=${BT2MAPLE_VERSION_PATCH}
+    BT2MAPLE_VERSION_STRING="${BT2MAPLE_VERSION}"
+)

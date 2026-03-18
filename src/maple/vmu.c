@@ -162,9 +162,17 @@ bool vmu_lcd_dirty(void) {
 }
 
 void vmu_on_game_id(const uint8_t *game_id, uint8_t len) {
-    // TODO: hash game_id to select a bank (0-9) for per-game VMU
-    (void)game_id; (void)len;
-    printf("[vmu] game ID received (%u bytes) — per-game bank not yet implemented\n", len);
+    // FNV-1a hash of the game ID bytes → bank index 0-9.
+    // Same game always maps to the same bank; different games rarely collide.
+    uint32_t hash = 2166136261u;  // FNV offset basis
+    for (uint8_t i = 0; i < len; i++) {
+        hash ^= game_id[i];
+        hash *= 16777619u;  // FNV prime
+    }
+    uint8_t bank = (uint8_t)(hash % VMU_NUM_BANKS);
+    printf("[vmu] game ID (%u bytes) → bank %u\n", len, bank);
+    if (bank != g_bank)
+        vmu_set_bank(bank);
 }
 
 // ── Command Handler ───────────────────────────────────────────────────────────

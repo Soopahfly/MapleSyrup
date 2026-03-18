@@ -26,8 +26,11 @@ struct uni_platform* get_bt2maple_platform(void);
 // LED blink patterns (requires CYW43 to be initialised first):
 //   2 blinks = cyw43_arch_init() succeeded
 //   3 blinks = platform registered, about to call uni_init()
-//   5 blinks = controller paired and ready
 //   solid    = scanning for controllers
+//   2 blinks = a BT device was discovered during inquiry (may repeat)
+//   1 blink  = BT link established (controller physically connected)
+//   5 blinks = HID negotiated — controller fully ready
+//   solid    = active / receiving input
 
 // Blink LED n times rapidly for diagnostics
 static void led_blink(int n) {
@@ -51,6 +54,10 @@ static void platform_on_init_complete(void) {
     printf("[bt] Bluepad32 init complete — starting scan\n");
     // CRITICAL: must call this or Bluepad32 never discovers controllers
     uni_bt_start_scanning_and_autoconnect_unsafe();
+    // Clear stored bonding keys — stale keys survive firmware flashes and
+    // will block new controllers from pairing. Must be called every boot
+    // during development; remove once pairing is stable.
+    uni_bt_del_keys_unsafe();
     printf("[bt] scanning started — LED solid\n");
     // LED solid = scanning/ready
     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
@@ -58,14 +65,23 @@ static void platform_on_init_complete(void) {
 
 static uni_error_t platform_on_device_discovered(bd_addr_t addr, const char* name,
                                                    uint16_t cod, uint8_t rssi) {
-    (void)addr; (void)name; (void)cod; (void)rssi;
-    // Accept all devices — Bluepad32 will filter to known gamepads
+    (void)addr; (void)rssi;
+    printf("[bt] device discovered: %s (cod=0x%04x)\n", name ? name : "unknown", cod);
+    // 2 rapid blinks = a BT device was discovered during inquiry
+    led_blink(2);
+    // Filter keyboards (matching official example behaviour)
+    if (((cod & UNI_BT_COD_MINOR_MASK) & UNI_BT_COD_MINOR_KEYBOARD) == UNI_BT_COD_MINOR_KEYBOARD) {
+        printf("[bt] ignoring keyboard\n");
+        return UNI_ERROR_IGNORE_DEVICE;
+    }
     return UNI_ERROR_SUCCESS;
 }
 
 static void platform_on_device_connected(uni_hid_device_t* d) {
     (void)d;
-    printf("[bt] device connected\n");
+    printf("[bt] device connected — 1 blink\n");
+    // 1 blink = BT link established (but HID not yet negotiated)
+    led_blink(1);
 }
 
 static void platform_on_device_disconnected(uni_hid_device_t* d) {
@@ -85,13 +101,23 @@ static uni_error_t platform_on_device_ready(uni_hid_device_t* d) {
 }
 
 static void platform_on_controller_data(uni_hid_device_t* d, uni_controller_t* ctl) {
-    (void)d;
     // Only handle gamepads
     if (ctl->klass != UNI_CONTROLLER_CLASS_GAMEPAD) return;
 
+    // Map gamepad inputs → Dreamcast controller state
     dc_controller_state_t state = DC_STATE_NEUTRAL;
     hid_map_gamepad(&ctl->gamepad, &state);
     controller_state_update(&state);
+
+    // Forward rumble: Dreamcast SET_CONDITION → BT controller.
+    // g_rumble_intensity written by Core 0 (maple.c); we only fire when it changes.
+    static uint8_t s_last_rumble = 0;
+    uint8_t rumble = g_rumble_intensity;
+    if (rumble != s_last_rumble) {
+        s_last_rumble = rumble;
+        if (d->report_parser.play_dual_rumble != NULL)
+            d->report_parser.play_dual_rumble(d, 0, 200, rumble, rumble);
+    }
 }
 
 static const uni_property_t* platform_get_property(uni_property_idx_t idx) {

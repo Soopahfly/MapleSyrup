@@ -6,43 +6,34 @@
 #include "maple/vmu.h"
 #include "bluetooth/bt.h"
 #include "storage/sd_card.h"
-#include "usb/usb_host.h"
-
-// Core 1 entry point: runs the BTstack + Bluepad32 event loop.
-// Never returns.
-static void core1_entry(void) {
-    bt_init();
-    bt_run();
-}
+#include "display/oled.h"
 
 int main(void) {
     stdio_init_all();
+    sleep_ms(500); // Let UART settle
 
-    // Initialise shared controller state before either core accesses it.
+    printf("\n\nbt2maple v" BT2MAPLE_VERSION_STRING "\n");
+    printf("[main] Core 0 starting\n");
+
+    // ── 1. Controller state (shared between cores via spinlock) ──────────────
     controller_state_init();
 
-    // Initialise USB host stack (TinyUSB host mode, VBUS enabled on GPIO 24).
-    // Must be called before launching Core 1 so TinyUSB is ready before any
-    // async_context work begins.  The task is polled from the maple_run loop.
-    usb_host_init();
-
-    // Core 1 owns Bluetooth — launch it first so pairing can begin
-    // while Core 0 waits for Maple frames.
-    multicore_launch_core1(core1_entry);
-
-    // Initialise SD card early (before maple_init which calls vmu_init).
-    bool sd_ok = sd_init();
-
-    // maple_init() calls vmu_init() which sets up the in-RAM VMU image (0xFF).
-    // Core 0 owns the Maple bus.
+    // ── 2. Maple bus PIO + VMU init ──────────────────────────────────────────
+    // maple_init() calls vmu_init() internally.
     maple_init();
+    oled_init();
 
-    // Attach SD card storage: loads vmu_a.bin or creates a blank image.
-    // Must be called after maple_init() / vmu_init().
-    vmu_sd_attach(sd_ok);
+    // ── 3. SD card (optional — VMU works from RAM if absent) ─────────────────
+    bool sd_ok = sd_init();
+    vmu_sd_attach(sd_ok);   // loads VMU image from SD if available
 
-    // maple_run() is the Core 0 main loop — it tight-polls the PIO RX FIFO.
-    // usb_host_task() is called from within that loop so TinyUSB events are
-    // serviced without a separate thread.
-    maple_run();   // Never returns
+    // ── 4. Bluetooth on Core 1 ───────────────────────────────────────────────
+    // bt_init() never returns — it calls btstack_run_loop_execute().
+    // Core 1 handles all BT/Bluepad32 work; Core 0 stays in the Maple loop.
+    printf("[main] launching BT on Core 1\n");
+    multicore_launch_core1(bt_init);
+
+    // ── 5. Maple bus tight-poll loop on Core 0 (never returns) ───────────────
+    printf("[main] entering Maple run loop on Core 0\n");
+    maple_run();
 }

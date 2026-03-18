@@ -4,6 +4,7 @@
 #include "config.h"
 #include "controller.h"
 #include "usb/usb_host.h"
+#include "display/oled.h"
 
 #include "hardware/pio.h"
 #include "hardware/clocks.h"
@@ -340,5 +341,11 @@ void __attribute__((noreturn)) __time_critical_func(maple_run)(void) {
         // ── 3. Transmit response ──────────────────────────────────────────────
         if (raw_resp_len > 0)
             transmit_response();
+
+        // ── 4. Update OLED if VMU LCD was written ─────────────────────────────
+        // vmu_lcd_dirty() clears the flag on read — only true after a SET_CONDITION
+        // LCD write, so this path is rarely taken and I2C cost is acceptable.
+        if (vmu_lcd_dirty())
+            oled_show_vmu(vmu_get_lcd());
     }
 }

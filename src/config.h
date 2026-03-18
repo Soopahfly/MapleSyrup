@@ -2,9 +2,10 @@
 
 // ── Maple Bus ─────────────────────────────────────────────────────────────────
 // SDCKA and SDCKB must be consecutive (PIO IN/OUT base + offset).
-// Pico 2 W alternate layout (avoids CYW43 conflict with GPIO16/17).
-#define PIN_MAPLE_SDCKA     6
-#define PIN_MAPLE_SDCKB     7       // Must be PIN_MAPLE_SDCKA + 1
+// Matches Pico2Maple-fw standard layout: GPIO 16 (SDCKA) and GPIO 17 (SDCKB).
+// CYW43 on Pico 2 W uses GPIO 23/24/25/29 — no conflict with 16/17.
+#define PIN_MAPLE_SDCKA     16
+#define PIN_MAPLE_SDCKB     17      // Must be PIN_MAPLE_SDCKA + 1
 
 // ── PIO ───────────────────────────────────────────────────────────────────────
 #define MAPLE_PIO           pio0
@@ -54,7 +55,8 @@
 #endif
 
 // ── VMU Buzzer ────────────────────────────────────────────────────────────────
-#define PIN_BUZZER          26      // PWM slice 5 channel A
+// GPIO 3 matches Pico2Maple-fw standard layout (PWM slice 1 channel B).
+#define PIN_BUZZER          3
 
 // ── VMU Banks ─────────────────────────────────────────────────────────────────
 // Select + R1 / L1 cycles through VMU bank slots 0-9.

@@ -8,10 +8,10 @@
 #define MAPLE_CMD_RESET             0x03
 #define MAPLE_CMD_SHUTDOWN          0x04
 #define MAPLE_CMD_GET_CONDITION     0x09    // Poll controller / VMU state
-#define MAPLE_CMD_GET_MEDIA_INFO    0x0B    // VMU: query storage geometry
-#define MAPLE_CMD_BLOCK_READ        0x0D    // VMU: read 512-byte block
-#define MAPLE_CMD_BLOCK_WRITE       0x0E    // VMU: write 512-byte block
-#define MAPLE_CMD_SET_CONDITION     0x12    // Rumble, VMU LED, etc.
+#define MAPLE_CMD_GET_MEDIA_INFO    0x0A    // VMU: query storage geometry
+#define MAPLE_CMD_BLOCK_READ        0x0B    // VMU: read block
+#define MAPLE_CMD_BLOCK_WRITE       0x0C    // VMU: write block
+#define MAPLE_CMD_SET_CONDITION     0x0E    // Rumble, VMU LED, etc.
 #define MAPLE_CMD_GAME_ID           0x21    // GDEMU/OpenMenu per-game VMU bank
 
 // ── Maple Responses (device → host) ──────────────────────────────────────────

@@ -1,70 +1,68 @@
 #include "vmu.h"
 #include "maple.h"
+#include "storage/sd_card.h"
+#include "config_store.h"
 #include <string.h>
 #include <stdio.h>
 
 // ── VMU Device Info Payload ───────────────────────────────────────────────────
-// Advertises: Storage + LCD + Clock functions (matches a real VMU).
+// func: storage(0x02) | LCD(0x04) | timer(0x08) = 0x0E, big-endian in wire order
+// The Maple bus sends function word big-endian: 0x00 0x00 0x00 0x0E
 static const uint8_t k_vmu_device_info[] = {
-    // func: storage | LCD | clock
+    // func: storage | LCD | timer (0x0E000000 big-endian on wire)
     0x0E, 0x00, 0x00, 0x00,
-    // func_data[0]: storage geometry
-    //   [31:24] = partition count - 1 (0 = 1 partition)
-    //   [23:16] = system area start block
-    //   [15:8]  = FAT offset
-    //   [7:0]   = number of FAT blocks
-    0x00, 0x1F, 0x00, 0xFF,
-    // func_data[1]: LCD geometry
-    //   [31:24] = width  (48)
-    //   [23:16] = height (32)
-    //   [15:8]  = colour depth (1 = 1bpp)
-    //   [7:0]   = 0x00
-    0x30, 0x20, 0x01, 0x00,
-    // func_data[2]: clock (unused, zero)
+    // func_data[0]: storage  0x000f4100 (little-endian in payload)
+    0x00, 0x41, 0x0F, 0x00,
+    // func_data[1]: LCD  0x00201f40 → 48 wide, 32 tall, 1-bit
+    0x40, 0x1F, 0x20, 0x00,
+    // func_data[2]: timer (unused, zero)
     0x00, 0x00, 0x00, 0x00,
-    // area_code, connector_direction
+    // area_code=0xFF, connector_direction=0x00
     0xFF, 0x00,
-    // product_name (30 bytes)
-    'V','i','s','u','a','l',' ','M','e','m','o','r','y',
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    // license (60 bytes)
-    'L','i','c','e','n','s','e','d',' ','b','y',' ',
-    'S','E','G','A',' ','E','n','t','e','r','p','r','i','s','e','s',',',' ','L','t','d',
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    // standby_mw, max_mw
-    0x01, 0x00,
-    0x02, 0x00,
+    // product_name (30 bytes, space-padded)
+    'V','i','s','u','a','l',' ','M','e','m','o','r','y',' ',' ',' ',
+    ' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',
+    // license (60 bytes, space-padded)
+    'L','i','c','e','n','s','e',' ','b','y',' ',
+    'S','E','G','A',' ','E','n','t','e','r','p','r','i','s','e','s',',',' ','L','t','d','.',
+    ' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',
+    ' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',' ',
+    // standby_power: 0x007c (little-endian)
+    0x7C, 0x00,
+    // max_power: 0x019a (little-endian)
+    0x9A, 0x01,
 };
 
-// ── VMU Media Info Payload ────────────────────────────────────────────────────
-// Returned in response to GET_MEDIA_INFO.  Geometry matches a standard VMU.
+// ── VMU Memory Information Payload ───────────────────────────────────────────
+// Returned in response to GET_MEMORY_INFORMATION (0x0A).
+// Geometry matches a standard Dreamcast VMU.
 static const uint8_t k_vmu_media_info[] = {
-    // func type
+    // func type: storage (0x00000002 little-endian)
     0x02, 0x00, 0x00, 0x00,
-    // total_size (uint16_t LE): 256 blocks
-    0x00, 0x01,
-    // partition_size (uint16_t LE): 256 blocks
-    0x00, 0x01,
-    // root_block (uint16_t LE): block 255 (last block is root)
+    // total_size (uint16_t LE): 255 blocks
     0xFF, 0x00,
-    // fat_offset (uint16_t LE): block 254
+    // partition (uint16_t LE): 0
+    0x00, 0x00,
+    // system_area (uint16_t LE): 255
+    0xFF, 0x00,
+    // fat_area (uint16_t LE): FAT block offset = 254
     0xFE, 0x00,
-    // fat_size (uint16_t LE): 1 FAT block
+    // num_fat_blocks (uint16_t LE): 1
     0x01, 0x00,
-    // file_info_offset (uint16_t LE): block 253
+    // file_area (uint16_t LE): directory at 253
     0xFD, 0x00,
-    // file_info_size (uint16_t LE): 13 blocks
-    0x0D, 0x00,
+    // num_file_blocks (uint16_t LE): 200
+    0xC8, 0x00,
     // volume_icon (uint8_t): 0
     0x00,
-    // reserved
+    // reserved (uint8_t): 0
     0x00,
-    // save_count (uint16_t LE): 200 user blocks
+    // save_area (uint16_t LE): 0
+    0x00, 0x00,
+    // num_save_blocks (uint16_t LE): 200
     0xC8, 0x00,
-    // extra_offset (uint16_t LE): 0
-    0x00, 0x00,
-    // extra_size (uint16_t LE): 0
-    0x00, 0x00,
+    // reserved2 (uint32_t): 0
+    0x00, 0x00, 0x00, 0x00,
 };
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -73,6 +71,10 @@ static uint8_t  g_lcd_buf[VMU_LCD_BYTES];
 static bool     g_lcd_dirty;
 static uint8_t  g_bank;
 
+// Track whether SD card is available for saves
+static bool     g_sd_available;
+static char     g_vmu_filename[32];
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 static uint8_t vmu_crc(const uint8_t *data, uint32_t len) {
     uint8_t crc = 0;
@@ -80,7 +82,7 @@ static uint8_t vmu_crc(const uint8_t *data, uint32_t len) {
     return crc;
 }
 
-// Write a response into raw_resp (raw byte buffer).
+// Write a response into out (raw byte buffer).
 // Returns total byte count written (header + payload + CRC).
 static uint32_t write_resp(uint8_t *out, uint8_t resp_code,
                             uint8_t dest, uint8_t src,
@@ -88,7 +90,7 @@ static uint32_t write_resp(uint8_t *out, uint8_t resp_code,
     uint32_t payload_words = (payload_bytes + 3) / 4;
     out[0] = (uint8_t)payload_words;
     out[1] = resp_code;
-    out[2] = src;   // src/dest swapped
+    out[2] = src;   // response: src/dest swapped relative to request
     out[3] = dest;
     if (payload && payload_bytes) {
         memcpy(out + 4, payload, payload_bytes);
@@ -102,21 +104,52 @@ static uint32_t write_resp(uint8_t *out, uint8_t resp_code,
     return total + 1;
 }
 
+static void save_to_sd(void) {
+    if (!g_sd_available) return;
+    if (!vmu_save(g_vmu_image, g_vmu_filename)) {
+        printf("[vmu] SD save failed: %s\n", g_vmu_filename);
+    }
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 void vmu_init(void) {
-    memset(g_vmu_image, 0, sizeof(g_vmu_image));
+    memset(g_vmu_image, 0xFF, sizeof(g_vmu_image));  // 0xFF = blank/erased flash
     memset(g_lcd_buf, 0, sizeof(g_lcd_buf));
     g_lcd_dirty = false;
     g_bank = 0;
+    g_sd_available = false;
+    snprintf(g_vmu_filename, sizeof(g_vmu_filename), "vmu_a.bin");
     printf("[vmu] init: %u KB RAM image, bank 0\n", VMU_IMAGE_SIZE / 1024);
+}
+
+void vmu_sd_attach(bool available) {
+    g_sd_available = available;
+    if (available) {
+        // Try to load VMU image from SD card
+        if (!vmu_load(g_vmu_image, g_vmu_filename)) {
+            printf("[vmu] no image found, using blank image\n");
+            // vmu_load creates a blank file if not found; image already 0xFF
+        } else {
+            printf("[vmu] loaded %s from SD\n", g_vmu_filename);
+        }
+    }
 }
 
 void vmu_set_bank(uint8_t bank) {
     if (bank >= VMU_NUM_BANKS) return;
-    // TODO: flush current bank to SD card, load new bank from SD
-    memset(g_vmu_image, 0, sizeof(g_vmu_image));
+    // Save current bank before switching
+    save_to_sd();
+    // Load new bank
     g_bank = bank;
-    printf("[vmu] switched to bank %u\n", bank);
+    snprintf(g_vmu_filename, sizeof(g_vmu_filename), "vmu_%c.bin", 'a' + bank);
+    memset(g_vmu_image, 0xFF, sizeof(g_vmu_image));
+    if (g_sd_available) {
+        if (!vmu_load(g_vmu_image, g_vmu_filename)) {
+            printf("[vmu] bank %u: no image found, using blank\n", bank);
+        } else {
+            printf("[vmu] bank %u: loaded %s\n", bank, g_vmu_filename);
+        }
+    }
 }
 
 uint8_t vmu_get_bank(void) { return g_bank; }
@@ -130,9 +163,29 @@ bool vmu_lcd_dirty(void) {
 }
 
 void vmu_on_game_id(const uint8_t *game_id, uint8_t len) {
-    // TODO: hash game_id to select a bank (0-9) for per-game VMU
-    (void)game_id; (void)len;
-    printf("[vmu] game ID received (%u bytes) — per-game bank not yet implemented\n", len);
+    // FNV-1a hash of the game ID bytes.
+    uint32_t hash = 2166136261u;  // FNV offset basis
+    for (uint8_t i = 0; i < len; i++) {
+        hash ^= game_id[i];
+        hash *= 16777619u;  // FNV prime
+    }
+
+    // Expose hash for hid_map.c to look up per-game button config.
+    g_current_game_hash = hash;
+
+    // Check for a per-game VMU bank override stored in config.
+    uint8_t bank;
+    game_cfg_t *gc = config_game_by_hash(hash);
+    if (gc && gc->vmu_bank != 0xFF) {
+        bank = gc->vmu_bank;
+    } else {
+        bank = (uint8_t)(hash % VMU_NUM_BANKS);
+    }
+
+    printf("[vmu] game ID (%u bytes) hash=%08lX → bank %u\n",
+           len, (unsigned long)hash, bank);
+    if (bank != g_bank)
+        vmu_set_bank(bank);
 }
 
 // ── Command Handler ───────────────────────────────────────────────────────────
@@ -147,65 +200,103 @@ uint32_t vmu_handle_command(uint8_t cmd, uint8_t dest, uint8_t src,
                           k_vmu_device_info, sizeof(k_vmu_device_info));
 
     case MAPLE_CMD_GET_MEDIA_INFO:
+        // Return memory info for storage partition
         return write_resp(out, MAPLE_RESP_DATA, dest, src,
                           k_vmu_media_info, sizeof(k_vmu_media_info));
 
     case MAPLE_CMD_GET_CONDITION: {
         // VMU has no readable "condition" but some games poll it.
         // Return a minimal storage-function condition (all zero).
-        uint8_t payload[8] = { 0x02,0x00,0x00,0x00, 0,0,0,0 };
+        uint8_t payload[8] = { 0x02, 0x00, 0x00, 0x00, 0, 0, 0, 0 };
         return write_resp(out, MAPLE_RESP_DATA, dest, src, payload, sizeof(payload));
     }
 
     case MAPLE_CMD_BLOCK_READ: {
-        // Request payload (after function word):
-        //   Word 0: func type (0x00000002)
-        //   Word 1: [partition<<24 | phase<<16 | block_hi<<8 | block_lo]
-        // Response: func word + 128 words (512 bytes) of block data
+        // Request payload:
+        //   Word 0: func type (0x00000002 = storage)
+        //   Word 1: [partition(8) | phase(8) | block_hi(8) | block_lo(8)]
+        //     block_number = block_hi<<8 | block_lo
+        // Response: func word + 64 bytes of block data (128 bytes / 2 phases)
         if (req_words < 2) return 0;
-        uint32_t req1 = raw_req[1];
-        uint16_t block = (uint16_t)((req1 >> 8) & 0xFFFF);
+
+        const uint8_t *req_bytes = (const uint8_t *)raw_req;
+        // Word 1 bytes: partition, phase, block_hi, block_lo
+        uint8_t phase    = req_bytes[5];
+        uint8_t block_hi = req_bytes[6];
+        uint8_t block_lo = req_bytes[7];
+        uint16_t block   = ((uint16_t)block_hi << 8) | block_lo;
+
         if (block >= VMU_NUM_BLOCKS) {
-            out[0] = 0; out[1] = MAPLE_RESP_FILE_ERROR; out[2] = src; out[3] = dest;
+            out[0] = 0; out[1] = MAPLE_RESP_FILE_ERROR;
+            out[2] = src; out[3] = dest;
             out[4] = vmu_crc(out, 4);
             return 5;
         }
-        // Build response: func word + 512 bytes of block data
-        uint8_t resp[4 + 4 + VMU_BLOCK_SIZE];
-        uint32_t func_word = 0x00000002;
+
+        // Each block is 512 bytes, split into 2 phases of 64 bytes each
+        // (The DC reads 64 bytes per transfer, so phase 0 = first 64, phase 1 = second 64)
+        // Actually Dreamcast VMU block reads return 512 bytes total split over phases.
+        // Phase encodes which 64-byte chunk of the 512-byte block to return.
+        uint32_t offset = (uint32_t)block * VMU_BLOCK_SIZE + (uint32_t)phase * 64;
+
+        // Build response: func word + 64 bytes
+        uint8_t resp[4 + 64];
+        uint32_t func_word = 0x00000002;  // storage func
         memcpy(resp, &func_word, 4);
-        memcpy(resp + 4, g_vmu_image + block * VMU_BLOCK_SIZE, VMU_BLOCK_SIZE);
+        if (offset + 64 <= VMU_IMAGE_SIZE) {
+            memcpy(resp + 4, g_vmu_image + offset, 64);
+        } else {
+            memset(resp + 4, 0xFF, 64);
+        }
         return write_resp(out, MAPLE_RESP_DATA, dest, src, resp, sizeof(resp));
     }
 
     case MAPLE_CMD_BLOCK_WRITE: {
         // Request payload:
         //   Word 0: func type
-        //   Word 1: [partition<<24 | phase<<16 | block_hi<<8 | block_lo]
-        //   Words 2..129: 512 bytes of data
-        if (req_words < 130) return 0;
-        uint32_t req1 = raw_req[1];
-        uint16_t block = (uint16_t)((req1 >> 8) & 0xFFFF);
-        if (block >= VMU_NUM_BLOCKS) {
-            out[0] = 0; out[1] = MAPLE_RESP_FILE_ERROR; out[2] = src; out[3] = dest;
-            out[4] = vmu_crc(out, 4);
-            return 5;
+        //   Word 1: [partition(8) | phase(8) | block_hi(8) | block_lo(8)]
+        //   Words 2+: data bytes
+        if (req_words < 2) return 0;
+
+        const uint8_t *req_bytes = (const uint8_t *)raw_req;
+        uint32_t func_type;
+        memcpy(&func_type, req_bytes, 4);
+
+        if (func_type & MAPLE_FUNC_STORAGE) {
+            // Storage write: 512 bytes per block
+            if (req_words < 130) return 0;  // need func + addr + 128 words data
+            uint8_t phase    = req_bytes[5];
+            uint8_t block_hi = req_bytes[6];
+            uint8_t block_lo = req_bytes[7];
+            uint16_t block   = ((uint16_t)block_hi << 8) | block_lo;
+
+            if (block >= VMU_NUM_BLOCKS) {
+                out[0] = 0; out[1] = MAPLE_RESP_FILE_ERROR;
+                out[2] = src; out[3] = dest;
+                out[4] = vmu_crc(out, 4);
+                return 5;
+            }
+            uint32_t offset = (uint32_t)block * VMU_BLOCK_SIZE + (uint32_t)phase * 64;
+            if (offset + 64 <= VMU_IMAGE_SIZE) {
+                memcpy(g_vmu_image + offset, req_bytes + 8, 64);
+            }
+            // Save to SD on each write (phase 7 = last phase of 512-byte block)
+            if (phase == 7) {
+                save_to_sd();
+            }
+        } else if (func_type & MAPLE_FUNC_LCD) {
+            // LCD write: 192 bytes of 48x32 1-bit pixel data
+            if (req_words >= 49) {  // func(4) + 192 bytes = 196 bytes = 49 words
+                memcpy(g_lcd_buf, req_bytes + 4, VMU_LCD_BYTES);
+                g_lcd_dirty = true;
+            }
         }
-        memcpy(g_vmu_image + block * VMU_BLOCK_SIZE, &raw_req[2], VMU_BLOCK_SIZE);
-        // ACK (no payload)
         return write_resp(out, MAPLE_RESP_ACK, dest, src, NULL, 0);
     }
 
-    case MAPLE_CMD_SET_CONDITION: {
-        // LCD write: func word 0x00000004, then 192 bytes of pixel data
-        if (req_words < 1) return 0;
-        uint32_t func = raw_req[0];
-        if ((func & MAPLE_FUNC_LCD) && req_words >= 49 /* 4+192 bytes = 49 words */) {
-            memcpy(g_lcd_buf, ((const uint8_t *)raw_req) + 4, VMU_LCD_BYTES);
-            g_lcd_dirty = true;
-        }
+    case MAPLE_CMD_SET_CONDITION:
+        // VMU has no inputs to set; just acknowledge
         return write_resp(out, MAPLE_RESP_ACK, dest, src, NULL, 0);
-    }
 
     case MAPLE_CMD_RESET:
     case MAPLE_CMD_SHUTDOWN:
@@ -213,6 +304,7 @@ uint32_t vmu_handle_command(uint8_t cmd, uint8_t dest, uint8_t src,
 
     default:
         printf("[vmu] unknown cmd 0x%02X\n", cmd);
-        return 0;
+        // Return ACK for unknown commands to avoid hanging the bus
+        return write_resp(out, MAPLE_RESP_ACK, dest, src, NULL, 0);
     }
 }

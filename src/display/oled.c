@@ -142,11 +142,31 @@ static void ssd1306_data(const uint8_t *data, uint16_t len) {
 }
 
 // ── Flush framebuffer to display ──────────────────────────────────────────────
+#if OLED_SH1106
+// SH1106: page-addressed GRAM (no horizontal-addressing mode).
+// The controller has 132 columns internally; the visible 128 start at column 2.
+#define SH1106_COL_OFFSET 2
+
+static void flush(void) {
+    uint8_t pages = OLED_HEIGHT / 8;
+    for (uint8_t p = 0; p < pages; p++) {
+        // Set page address
+        ssd1306_cmd(0xB0 | p);
+        // Set column address (lower nibble, upper nibble) with 2-pixel offset
+        ssd1306_cmd(SSD1306_SET_LOW_COLUMN  | (SH1106_COL_OFFSET & 0x0F));
+        ssd1306_cmd(SSD1306_SET_HIGH_COLUMN | (SH1106_COL_OFFSET >> 4));
+        // Write one full page (128 bytes)
+        ssd1306_data(g_fb + (p * OLED_WIDTH), OLED_WIDTH);
+    }
+}
+#else
+// SSD1306: horizontal addressing mode — stream entire framebuffer in one shot.
 static void flush(void) {
     ssd1306_cmd(SSD1306_COLUMN_ADDR); ssd1306_cmd(0); ssd1306_cmd(OLED_WIDTH - 1);
     ssd1306_cmd(SSD1306_PAGE_ADDR);   ssd1306_cmd(0); ssd1306_cmd((OLED_HEIGHT / 8) - 1);
     ssd1306_data(g_fb, sizeof(g_fb));
 }
+#endif
 
 // ── Public API ────────────────────────────────────────────────────────────────
 void oled_init(void) {
@@ -159,25 +179,29 @@ void oled_init(void) {
     sleep_ms(10);
 
     ssd1306_cmd(SSD1306_DISPLAY_OFF);
-    ssd1306_cmd(SSD1306_SET_DISPLAY_CLK);  ssd1306_cmd(0x80);
-    ssd1306_cmd(SSD1306_SET_MULTIPLEX);    ssd1306_cmd(OLED_HEIGHT - 1);
+    ssd1306_cmd(SSD1306_SET_DISPLAY_CLK);    ssd1306_cmd(0x80);
+    ssd1306_cmd(SSD1306_SET_MULTIPLEX);      ssd1306_cmd(OLED_HEIGHT - 1);
     ssd1306_cmd(SSD1306_SET_DISPLAY_OFFSET); ssd1306_cmd(0x00);
     ssd1306_cmd(SSD1306_SET_START_LINE | 0x00);
-    ssd1306_cmd(SSD1306_CHARGE_PUMP);      ssd1306_cmd(0x14);  // internal VCC
-    ssd1306_cmd(SSD1306_MEMORY_MODE);      ssd1306_cmd(0x00);  // horizontal
+    ssd1306_cmd(SSD1306_CHARGE_PUMP);        ssd1306_cmd(0x14);  // internal VCC
+#if !OLED_SH1106
+    // SSD1306 only: set horizontal addressing mode.
+    // SH1106 does not support this command and ignores it, but omitting is cleaner.
+    ssd1306_cmd(SSD1306_MEMORY_MODE);        ssd1306_cmd(0x00);
+#endif
     ssd1306_cmd(SSD1306_SEG_REMAP);
     ssd1306_cmd(SSD1306_COM_SCAN_DEC);
-    ssd1306_cmd(SSD1306_SET_COM_PINS);     ssd1306_cmd(0x12);
-    ssd1306_cmd(SSD1306_SET_CONTRAST);     ssd1306_cmd(0xCF);
-    ssd1306_cmd(SSD1306_SET_PRECHARGE);    ssd1306_cmd(0xF1);
-    ssd1306_cmd(SSD1306_SET_VCOM_DETECT);  ssd1306_cmd(0x40);
+    ssd1306_cmd(SSD1306_SET_COM_PINS);       ssd1306_cmd(0x12);
+    ssd1306_cmd(SSD1306_SET_CONTRAST);       ssd1306_cmd(0xCF);
+    ssd1306_cmd(SSD1306_SET_PRECHARGE);      ssd1306_cmd(0xF1);
+    ssd1306_cmd(SSD1306_SET_VCOM_DETECT);    ssd1306_cmd(0x40);
     ssd1306_cmd(SSD1306_DISPLAY_ALL_ON_RES);
     ssd1306_cmd(SSD1306_NORMAL_DISPLAY);
     ssd1306_cmd(SSD1306_DISPLAY_ON);
 
     memset(g_fb, 0, sizeof(g_fb));
     flush();
-    printf("[oled] init ok\n");
+    printf("[oled] init ok (%s)\n", OLED_SH1106 ? "SH1106" : "SSD1306");
 }
 
 void oled_clear(void) {

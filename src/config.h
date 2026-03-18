@@ -25,6 +25,18 @@
 #define PIN_SD_RX           12      // MISO
 #define PIN_SD_CS           13
 
+// ── Config Mode Button ────────────────────────────────────────────────────────
+// Hold LOW at boot (short to GND) to enter the web config console.
+// Internal pull-up is enabled; idle state = HIGH (not pressed).
+#define PIN_MODE_BTN        22
+
+// ── VMU SD Card Pin Aliases ───────────────────────────────────────────────────
+#define VMU_SD_SCK_PIN      10
+#define VMU_SD_MOSI_PIN     11
+#define VMU_SD_MISO_PIN     12
+#define VMU_SD_CS_PIN       13
+#define VMU_SD_BAUD         (12 * 1000 * 1000)  // 12 MHz
+
 // ── OLED Display (I2C0) ───────────────────────────────────────────────────────
 #define PIN_OLED_SDA        4
 #define PIN_OLED_SCL        5
@@ -32,6 +44,14 @@
 #define OLED_I2C_ADDR       0x3C
 #define OLED_WIDTH          128
 #define OLED_HEIGHT         64
+
+// ── OLED Controller Selection ─────────────────────────────────────────────────
+// 0 = SSD1306 (default — most 0.96" and some 1.3" modules)
+// 1 = SH1106  (most 1.3" modules — same resolution, page-addressed GRAM)
+// Future: selectable at runtime via web config UI.
+#ifndef OLED_SH1106
+#define OLED_SH1106         0
+#endif
 
 // ── VMU Buzzer ────────────────────────────────────────────────────────────────
 #define PIN_BUZZER          26      // PWM slice 5 channel A

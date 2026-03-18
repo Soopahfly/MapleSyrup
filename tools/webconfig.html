@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MapleSyrup Config</title>
+<style>
+  body { font-family: monospace; max-width: 900px; margin: 40px auto; padding: 0 20px; background:#1a1a1a; color:#e0e0e0; }
+  h1 { color:#f0a000; }
+  h2 { color:#80c0ff; border-bottom:1px solid #444; padding-bottom:4px; }
+  button { background:#333; color:#e0e0e0; border:1px solid #666; padding:6px 14px; cursor:pointer; margin:2px; }
+  button:hover { background:#555; }
+  button.primary { background:#004080; border-color:#0080ff; }
+  button.danger  { background:#600; border-color:#f00; }
+  input, select { background:#222; color:#e0e0e0; border:1px solid #555; padding:4px; }
+  table { border-collapse:collapse; width:100%; }
+  td,th { border:1px solid #444; padding:6px 10px; text-align:left; }
+  th { background:#2a2a2a; }
+  .status { padding:8px; background:#222; margin:8px 0; border-left:4px solid #f0a000; }
+  .ok  { border-color:#0f0; }
+  .err { border-color:#f00; }
+  #log { background:#111; padding:10px; height:200px; overflow-y:auto; font-size:12px; white-space:pre; }
+  .section { background:#222; padding:16px; margin:12px 0; border-radius:4px; }
+  label { display:inline-block; width:180px; }
+</style>
+</head>
+<body>
+
+<h1>🍁 MapleSyrup Config</h1>
+
+<div class="status" id="conn-status">Not connected — click Connect below.</div>
+
+<button class="primary" id="btn-connect">Connect via USB Serial</button>
+<button id="btn-refresh" disabled>Refresh</button>
+<button id="btn-save"    disabled>Save to Flash</button>
+<button class="primary" id="btn-reboot" disabled>Save &amp; Reboot</button>
+
+<p style="color:#888;font-size:12px">
+  Requires Chrome/Edge. Put the Pico 2 W in config mode first:<br>
+  Hold the config button (GPIO 22 → GND) while plugging in USB, then click Connect.
+</p>
+
+<!-- ── Global Settings ─────────────────────────────────────────────────── -->
+<div class="section">
+<h2>Global Settings</h2>
+<table id="global-table">
+  <tr><th>Setting</th><th>Value</th><th></th></tr>
+  <tr><td><label>Deadzone inner (%)</label></td>
+      <td><input type="number" id="g-dz-inner" min="0"  max="50"  value="10" style="width:70px"></td>
+      <td>Stick movement &lt; this % of range = centre</td></tr>
+  <tr><td><label>Deadzone outer (%)</label></td>
+      <td><input type="number" id="g-dz-outer" min="51" max="100" value="95" style="width:70px"></td>
+      <td>Stick movement &gt; this % of range = full throw</td></tr>
+  <tr><td><label>Trigger threshold</label></td>
+      <td><input type="number" id="g-trig"     min="0"  max="255" value="30" style="width:70px"></td>
+      <td>Analogue trigger value (0–255) at which it fires as digital</td></tr>
+  <tr><td><label>Rapid fire (Hz)</label></td>
+      <td><input type="number" id="g-rf-hz"    min="1"  max="30"  value="10" style="width:70px"></td>
+      <td></td></tr>
+  <tr><td><label>Rapid fire buttons</label></td>
+      <td><input type="text"   id="g-rf-mask"  value="0" style="width:70px"></td>
+      <td>Bitmask of DC button slots (C=1,B=2,A=4,Start=8,…)</td></tr>
+  <tr><td><label>Default mode</label></td>
+      <td><select id="g-mode">
+        <option value="0">0 – Standard</option>
+        <option value="1">1 – Dual Analog</option>
+        <option value="2">2 – Twin Stick</option>
+        <option value="3">3 – Fight Stick</option>
+        <option value="4">4 – Racing</option>
+      </select></td>
+      <td></td></tr>
+  <tr><td><label>Invert axes</label></td>
+      <td>
+        LX<input type="checkbox" id="g-inv-lx">
+        LY<input type="checkbox" id="g-inv-ly">
+        RX<input type="checkbox" id="g-inv-rx">
+        RY<input type="checkbox" id="g-inv-ry">
+      </td>
+      <td></td></tr>
+</table>
+<button id="btn-apply-global" disabled>Apply Global Settings</button>
+</div>
+
+<!-- ── Per-game Configs ───────────────────────────────────────────────── -->
+<div class="section">
+<h2>Per-Game Button Remapping</h2>
+<p style="color:#888;font-size:12px">
+  Each game is identified by its GDEMU Game ID hash. When a game sends its ID over Maple, MapleSyrup automatically switches to the matching config.
+</p>
+<div>
+  <label>Game hash (hex):</label>
+  <input type="text" id="game-hash-input" placeholder="e.g. A1B2C3D4" style="width:120px">
+  <button id="btn-load-game" disabled>Load / Create</button>
+</div>
+
+<div id="game-editor" style="display:none; margin-top:16px;">
+  <table>
+    <tr><th>Field</th><th>Value</th></tr>
+    <tr><td>Name</td><td><input type="text" id="ge-name" style="width:200px"></td></tr>
+    <tr><td>VMU Bank</td>
+        <td><select id="ge-bank">
+          <option value="auto">Auto (hash-based)</option>
+          <option value="0">0</option><option value="1">1</option><option value="2">2</option>
+          <option value="3">3</option><option value="4">4</option><option value="5">5</option>
+          <option value="6">6</option><option value="7">7</option><option value="8">8</option>
+          <option value="9">9</option>
+        </select></td></tr>
+    <tr><td>Controller Mode</td>
+        <td><select id="ge-mode">
+          <option value="default">Default (global)</option>
+          <option value="0">0 – Standard</option>
+          <option value="1">1 – Dual Analog</option>
+          <option value="2">2 – Twin Stick</option>
+          <option value="3">3 – Fight Stick</option>
+          <option value="4">4 – Racing</option>
+        </select></td></tr>
+  </table>
+
+  <h3 style="color:#80c0ff; margin-top:16px;">Button Remap</h3>
+  <p style="color:#888;font-size:12px">Map each Dreamcast button to a source input. "default" uses the global mapping.</p>
+  <table id="remap-table">
+    <tr><th>DC Button</th><th>Source</th></tr>
+  </table>
+  <div style="margin-top:10px;">
+    <button id="btn-apply-game" disabled>Apply Game Config</button>
+    <button id="btn-del-game" class="danger" disabled>Delete Game Config</button>
+  </div>
+</div>
+
+<h3 style="color:#80c0ff; margin-top:20px;">Stored Games</h3>
+<div id="games-list">— connect and click Refresh —</div>
+</div>
+
+<!-- ── Serial log ──────────────────────────────────────────────────────── -->
+<div class="section">
+<h2>Serial Log</h2>
+<div id="log"></div>
+<button id="btn-clear-log">Clear Log</button>
+</div>
+
+<script>
+// ── Serial state ──────────────────────────────────────────────────────────────
+let port = null;
+let reader = null;
+let writer = null;
+let readBuf = '';
+const pendingCmds = [];  // queue of {resolve, reject, lines:[]}
+
+const SRC_BUTTONS = ['A','B','X','Y','L_SHOULDER','R_SHOULDER',
+                     'L_TRIGGER','R_TRIGGER','SELECT','START',
+                     'DPAD_UP','DPAD_DOWN','DPAD_LEFT','DPAD_RIGHT','default'];
+const DC_SLOTS = ['C','B','A','START','UP','DOWN','LEFT','RIGHT','Z','Y','X','D'];
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+function log(msg) {
+  const el = document.getElementById('log');
+  el.textContent += msg + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+function setStatus(msg, cls='') {
+  const el = document.getElementById('conn-status');
+  el.textContent = msg;
+  el.className = 'status ' + cls;
+}
+function setConnected(yes) {
+  document.querySelectorAll('[id^="btn-"]').forEach(b => {
+    if (!['btn-connect','btn-clear-log'].includes(b.id)) b.disabled = !yes;
+  });
+  if (yes) {
+    document.getElementById('btn-connect').disabled = true;
+    setStatus('Connected', 'ok');
+  }
+}
+
+// ── Serial low-level ──────────────────────────────────────────────────────────
+async function serialConnect() {
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+    const enc = new TextEncoder();
+    const ws = port.writable.getWriter();
+    writer = { write: async (s) => { await ws.write(enc.encode(s)); log('>> ' + s.trimEnd()); } };
+
+    // Continuous read loop
+    (async () => {
+      const dec = new TextDecoder();
+      const r = port.readable.getReader();
+      reader = r;
+      try {
+        while (true) {
+          const { value, done } = await r.read();
+          if (done) break;
+          readBuf += dec.decode(value);
+          let nl;
+          while ((nl = readBuf.indexOf('\n')) >= 0) {
+            const line = readBuf.slice(0, nl).replace(/\r$/, '');
+            readBuf = readBuf.slice(nl + 1);
+            log('<< ' + line);
+            if (pendingCmds.length) {
+              const cmd = pendingCmds[0];
+              if (line === 'OK' || line.startsWith('OK')) { cmd.resolve(cmd.lines); pendingCmds.shift(); }
+              else if (line.startsWith('ERR'))            { cmd.reject(new Error(line)); pendingCmds.shift(); }
+              else if (line !== 'Ready>') cmd.lines.push(line);
+            }
+          }
+        }
+      } catch(e) { log('Read error: ' + e); }
+    })();
+
+    setConnected(true);
+    await refreshAll();
+  } catch(e) {
+    setStatus('Connection failed: ' + e, 'err');
+  }
+}
+
+function sendCmd(cmd) {
+  return new Promise((resolve, reject) => {
+    pendingCmds.push({ resolve, reject, lines: [] });
+    writer.write(cmd + '\n');
+  });
+}
+
+// ── Data fetch helpers ────────────────────────────────────────────────────────
+function parseKV(lines) {
+  const obj = {};
+  for (const l of lines) {
+    const eq = l.indexOf('=');
+    if (eq >= 0) obj[l.slice(0, eq)] = l.slice(eq + 1);
+  }
+  return obj;
+}
+
+async function refreshGlobal() {
+  const lines = await sendCmd('get');
+  const kv = parseKV(lines);
+  document.getElementById('g-dz-inner').value = kv.deadzone_inner ?? 10;
+  document.getElementById('g-dz-outer').value = kv.deadzone_outer ?? 95;
+  document.getElementById('g-trig').value     = kv.trigger_threshold ?? 30;
+  document.getElementById('g-rf-hz').value    = kv.rapid_fire_hz ?? 10;
+  document.getElementById('g-rf-mask').value  = kv.rapid_fire_mask ?? 0;
+  document.getElementById('g-mode').value     = kv.default_ctrl_mode ?? 0;
+  document.getElementById('g-inv-lx').checked = kv.invert_lx === '1';
+  document.getElementById('g-inv-ly').checked = kv.invert_ly === '1';
+  document.getElementById('g-inv-rx').checked = kv.invert_rx === '1';
+  document.getElementById('g-inv-ry').checked = kv.invert_ry === '1';
+}
+
+async function refreshGamesList() {
+  const lines = await sendCmd('games');
+  const kv = parseKV(lines);
+  const entries = lines.filter(l => l.startsWith('hash='));
+  const div = document.getElementById('games-list');
+  if (!entries.length) { div.textContent = '(no game configs stored)'; return; }
+  let html = '<table><tr><th>Hash</th><th>Name</th><th>VMU Bank</th><th>Mode</th><th></th></tr>';
+  for (const e of entries) {
+    const fields = parseKV([e.replace(/hash=(\S+)\s+/, 'hash=$1\n').replace(/\s+/g, '\n')]);
+    // Parse line manually: hash=X name=Y vmu_bank=Z ctrl_mode=W
+    const parts = {};
+    e.split(' ').forEach(p => { const eq=p.indexOf('='); if(eq>=0) parts[p.slice(0,eq)]=p.slice(eq+1); });
+    html += `<tr>
+      <td>${parts.hash}</td>
+      <td>${parts.name}</td>
+      <td>${parts.vmu_bank}</td>
+      <td>${parts.ctrl_mode}</td>
+      <td><button onclick="loadGame('${parts.hash}')">Edit</button></td>
+    </tr>`;
+  }
+  html += '</table>';
+  div.innerHTML = html;
+}
+
+async function refreshAll() {
+  await refreshGlobal();
+  await refreshGamesList();
+}
+
+// ── Game editor ───────────────────────────────────────────────────────────────
+function buildRemapTable() {
+  const tbody = document.getElementById('remap-table');
+  // Clear existing rows except header
+  while (tbody.rows.length > 1) tbody.deleteRow(1);
+  for (const slot of DC_SLOTS) {
+    const row = tbody.insertRow();
+    row.insertCell().textContent = slot;
+    const sel = document.createElement('select');
+    sel.id = 'remap-' + slot;
+    for (const src of SRC_BUTTONS) {
+      const opt = document.createElement('option');
+      opt.value = src === 'default' ? 'default' : src;
+      opt.textContent = src;
+      sel.appendChild(opt);
+    }
+    row.insertCell().appendChild(sel);
+  }
+}
+
+async function loadGame(hash) {
+  document.getElementById('game-hash-input').value = hash;
+  buildRemapTable();
+  try {
+    const lines = await sendCmd('game ' + hash);
+    const kv = parseKV(lines);
+    document.getElementById('ge-name').value  = kv.name  ?? '';
+    document.getElementById('ge-bank').value  = kv.vmu_bank  ?? 'auto';
+    document.getElementById('ge-mode').value  = kv.ctrl_mode ?? 'default';
+    for (const slot of DC_SLOTS) {
+      const sel = document.getElementById('remap-' + slot);
+      if (sel) sel.value = kv['remap_' + slot] ?? 'default';
+    }
+    document.getElementById('game-editor').style.display = 'block';
+    document.getElementById('btn-apply-game').disabled = false;
+    document.getElementById('btn-del-game').disabled = false;
+    window.currentGameHash = hash;
+  } catch(e) {
+    // New game — show empty editor
+    document.getElementById('ge-name').value = '';
+    document.getElementById('ge-bank').value = 'auto';
+    document.getElementById('ge-mode').value = 'default';
+    document.getElementById('game-editor').style.display = 'block';
+    document.getElementById('btn-apply-game').disabled = false;
+    document.getElementById('btn-del-game').disabled = true;
+    window.currentGameHash = hash;
+  }
+}
+
+// ── Button event handlers ─────────────────────────────────────────────────────
+document.getElementById('btn-connect').addEventListener('click', serialConnect);
+document.getElementById('btn-clear-log').addEventListener('click', () => { document.getElementById('log').textContent = ''; });
+document.getElementById('btn-refresh').addEventListener('click', refreshAll);
+
+document.getElementById('btn-save').addEventListener('click', async () => {
+  await sendCmd('save');
+  setStatus('Saved to flash', 'ok');
+});
+
+document.getElementById('btn-reboot').addEventListener('click', async () => {
+  await sendCmd('save');
+  await sendCmd('reboot');
+  setStatus('Rebooting…', '');
+  setConnected(false);
+});
+
+document.getElementById('btn-apply-global').addEventListener('click', async () => {
+  const cmds = [
+    `set deadzone_inner ${document.getElementById('g-dz-inner').value}`,
+    `set deadzone_outer ${document.getElementById('g-dz-outer').value}`,
+    `set trigger_threshold ${document.getElementById('g-trig').value}`,
+    `set rapid_fire_hz ${document.getElementById('g-rf-hz').value}`,
+    `set rapid_fire_mask ${document.getElementById('g-rf-mask').value}`,
+    `set default_ctrl_mode ${document.getElementById('g-mode').value}`,
+    `set invert_lx ${document.getElementById('g-inv-lx').checked?1:0}`,
+    `set invert_ly ${document.getElementById('g-inv-ly').checked?1:0}`,
+    `set invert_rx ${document.getElementById('g-inv-rx').checked?1:0}`,
+    `set invert_ry ${document.getElementById('g-inv-ry').checked?1:0}`,
+  ];
+  for (const cmd of cmds) await sendCmd(cmd);
+  setStatus('Global settings applied', 'ok');
+});
+
+document.getElementById('btn-load-game').addEventListener('click', () => {
+  const h = document.getElementById('game-hash-input').value.trim();
+  if (h) loadGame(h.toUpperCase());
+});
+
+document.getElementById('btn-apply-game').addEventListener('click', async () => {
+  const hash = window.currentGameHash;
+  if (!hash) return;
+  await sendCmd(`setgame ${hash} name ${document.getElementById('ge-name').value || 'Game_' + hash}`);
+  await sendCmd(`setgame ${hash} vmu_bank ${document.getElementById('ge-bank').value}`);
+  await sendCmd(`setgame ${hash} ctrl_mode ${document.getElementById('ge-mode').value}`);
+  for (const slot of DC_SLOTS) {
+    const sel = document.getElementById('remap-' + slot);
+    if (sel) await sendCmd(`setgame ${hash} remap_${slot} ${sel.value}`);
+  }
+  await refreshGamesList();
+  setStatus('Game config applied', 'ok');
+});
+
+document.getElementById('btn-del-game').addEventListener('click', async () => {
+  const hash = window.currentGameHash;
+  if (!hash) return;
+  await sendCmd('delgame ' + hash);
+  document.getElementById('game-editor').style.display = 'none';
+  window.currentGameHash = null;
+  await refreshGamesList();
+});
+
+// Build remap table on page load so it shows even before connecting
+buildRemapTable();
+</script>
+</body>
+</html>

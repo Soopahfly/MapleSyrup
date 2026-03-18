@@ -3,6 +3,8 @@
 #include "vmu.h"
 #include "config.h"
 #include "controller.h"
+#include "usb/usb_host.h"
+#include "display/oled.h"
 
 #include "hardware/pio.h"
 #include "hardware/clocks.h"
@@ -214,13 +216,20 @@ static void handle_command(void) {
     const uint8_t *payload = rx_bytes + 4;
     uint32_t payload_len   = (uint32_t)frame_words * 4;
 
-    // Filter: only respond to our own addresses
-    if (dest != MAPLE_ADDR_CONTROLLER && dest != MAPLE_ADDR_VMU &&
-        dest != (MAPLE_ADDR_CONTROLLER & 0xC0)) {
+    // Filter: only respond to our own addresses.
+    // MAPLE_ADDR_CONTROLLER = 0x21 (Port A main peripheral, sub1 present).
+    // MAPLE_ADDR_VMU        = 0x01 (Port A sub-peripheral slot 1).
+    // Broadcast address     = 0x00 (all peripherals respond).
+    // Sub-peripheral bit: dest & 0x01 non-zero means addressed to a sub-device.
+    bool is_broadcast   = (dest == MAPLE_ADDR_HOST);
+    bool is_controller  = (dest == MAPLE_ADDR_CONTROLLER);
+    bool is_vmu         = (dest == MAPLE_ADDR_VMU) || (!is_controller && (dest & 0x01));
+    if (!is_broadcast && !is_controller && !is_vmu) {
         return;
     }
 
-    if (dest == MAPLE_ADDR_VMU) {
+    // Route sub-peripheral commands to VMU handler
+    if (is_vmu) {
         raw_resp_len = vmu_handle_command(command, dest, src,
                                           (const uint32_t *)payload,
                                           frame_words, raw_resp);
@@ -315,6 +324,12 @@ void __attribute__((noreturn)) __time_critical_func(maple_run)(void) {
     printf("[maple] run loop started\n");
 
     while (true) {
+        // ── 0. Service USB host events ────────────────────────────────────────
+        // tuh_task() is non-blocking; it processes any pending TinyUSB events
+        // and returns immediately if there is nothing to do.  Calling it here
+        // ensures wired controllers are serviced once per Maple frame (~5 ms).
+        usb_host_task();
+
         // ── 1. Receive a complete Maple frame ─────────────────────────────────
         uint32_t rx_len = rx_receive_frame();
         if (rx_len < 4) continue;   // timeout or framing error
@@ -326,5 +341,11 @@ void __attribute__((noreturn)) __time_critical_func(maple_run)(void) {
         // ── 3. Transmit response ──────────────────────────────────────────────
         if (raw_resp_len > 0)
             transmit_response();
+
+        // ── 4. Update OLED if VMU LCD was written ─────────────────────────────
+        // vmu_lcd_dirty() clears the flag on read — only true after a SET_CONDITION
+        // LCD write, so this path is rarely taken and I2C cost is acceptable.
+        if (vmu_lcd_dirty())
+            oled_show_vmu(vmu_get_lcd());
     }
 }

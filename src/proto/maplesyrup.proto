@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+// GPIO pin assignments — stored in config so they can be changed via web UI.
+// Defaults match the Pico2Maple-fw standard layout.
+message GpioConfig {
+    int32 maple_sdcka  = 1;   // default 16
+    int32 maple_sdckb  = 2;   // default 17 (must be maple_sdcka + 1)
+    int32 buzzer       = 3;   // default 3
+    int32 oled_sda     = 4;   // default 4
+    int32 oled_scl     = 5;   // default 5
+    int32 sd_sck       = 6;   // default 10
+    int32 sd_tx        = 7;   // default 11 (MOSI)
+    int32 sd_rx        = 8;   // default 12 (MISO)
+    int32 sd_cs        = 9;   // default 13
+    int32 mode_btn     = 10;  // default 22
+}
+
+// Global controller settings applied to all games unless overridden.
+message GlobalConfig {
+    uint32 deadzone_inner     = 1;   // 0-50,   default 10
+    uint32 deadzone_outer     = 2;   // 51-100, default 90
+    uint32 trigger_threshold  = 3;   // 0-255,  default 30
+    uint32 rapid_fire_hz      = 4;   // 1-30,   default 10
+    uint32 rapid_fire_mask    = 5;   // bitmask of buttons with rapid fire enabled
+    bool   invert_lx          = 6;
+    bool   invert_ly          = 7;
+    bool   invert_rx          = 8;
+    bool   invert_ry          = 9;
+    uint32 default_ctrl_mode  = 10;  // ctrl_mode_t value (0-4)
+}
+
+// Per-game overrides, keyed by 32-bit GDI disc hash.
+message GameConfig {
+    uint32          hash      = 1;
+    string          name      = 2;   // human-readable game title
+    uint32          vmu_bank  = 3;   // 0-9 = specific bank, 255 = auto
+    uint32          ctrl_mode = 4;   // 0-4 = override, 255 = use default
+    repeated uint32 btn_remap = 5;   // indexed by DC button slot, value = src button index, 255 = passthrough
+}
+
+// Top-level config message stored in flash.
+message MapleSyrupConfig {
+    uint32       config_version = 1;  // increment forces factory reset on mismatch
+    GpioConfig   gpio           = 2;
+    GlobalConfig global         = 3;
+    repeated GameConfig games   = 4;  // up to 32 entries
+}

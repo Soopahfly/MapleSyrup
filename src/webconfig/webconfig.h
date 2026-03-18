@@ -10,6 +10,10 @@
 // Protocol: newline-terminated text commands, responses end with "OK" or "ERR".
 // Also parseable by tools/webconfig.html via the Web Serial API in Chrome.
 //
+// Supported commands include global settings (deadzone, rapid-fire, etc.),
+// GPIO pin assignments (getpins / setpin), and per-game remapping (game,
+// setgame, delgame).  GPIO pin changes take effect after save + reboot.
+//
 // sd_available: true if SD card was successfully mounted (used to report
 //               which VMU bank files exist on the card).
 //

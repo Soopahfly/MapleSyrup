@@ -195,21 +195,22 @@ void hid_map_gamepad(const uni_gamepad_t *gp, dc_controller_state_t *s) {
     global_cfg_t *gcfg = config_global();
 
     // Per-game config: if found, override ctrl_mode and use custom remap.
-    const uint8_t *remap = k_default_remap;
+    // btn_remap is now uint32_t[] (nanopb); we read per-slot values inline.
     game_cfg_t *pgcfg = config_game_by_hash(g_current_game_hash);
-    if (pgcfg) {
-        if (pgcfg->ctrl_mode != 0xFF)
-            controller_set_mode((ctrl_mode_t)pgcfg->ctrl_mode);
-        remap = pgcfg->btn_remap;
-    }
+    if (pgcfg && pgcfg->ctrl_mode != 0xFF)
+        controller_set_mode((ctrl_mode_t)pgcfg->ctrl_mode);
 
     // ── Button mapping ────────────────────────────────────────────────────
     for (int slot = 0; slot < DC_NUM_BUTTONS; slot++) {
-        uint8_t src = remap[slot];
+        uint8_t src;
+        if (pgcfg && (pb_size_t)slot < pgcfg->btn_remap_count)
+            src = (uint8_t)pgcfg->btn_remap[slot];
+        else
+            src = k_default_remap[slot];
         if (src == SRC_BTN_NONE) src = k_default_remap[slot]; // fall back to default
         if (src == SRC_BTN_NONE || src >= SRC_BTN_COUNT) continue;
 
-        if (src_pressed(src, gp, gcfg->trigger_threshold)) {
+        if (src_pressed(src, gp, (uint8_t)gcfg->trigger_threshold)) {
             bool fire = true;
             if (gcfg->rapid_fire_mask & (1u << slot))
                 fire = rf_on(gcfg->rapid_fire_hz ? gcfg->rapid_fire_hz : 10);
@@ -228,10 +229,10 @@ void hid_map_gamepad(const uni_gamepad_t *gp, dc_controller_state_t *s) {
     int32_t rx_raw = gcfg->invert_rx ? -gp->axis_rx : gp->axis_rx;
     int32_t ry_raw = gcfg->invert_ry ? -gp->axis_ry : gp->axis_ry;
 
-    uint8_t lx = axis_with_dz(lx_raw, gcfg->deadzone_inner, gcfg->deadzone_outer);
-    uint8_t ly = axis_with_dz(ly_raw, gcfg->deadzone_inner, gcfg->deadzone_outer);
-    uint8_t rx = axis_with_dz(rx_raw, gcfg->deadzone_inner, gcfg->deadzone_outer);
-    uint8_t ry = axis_with_dz(ry_raw, gcfg->deadzone_inner, gcfg->deadzone_outer);
+    uint8_t lx = axis_with_dz(lx_raw, (uint8_t)gcfg->deadzone_inner, (uint8_t)gcfg->deadzone_outer);
+    uint8_t ly = axis_with_dz(ly_raw, (uint8_t)gcfg->deadzone_inner, (uint8_t)gcfg->deadzone_outer);
+    uint8_t rx = axis_with_dz(rx_raw, (uint8_t)gcfg->deadzone_inner, (uint8_t)gcfg->deadzone_outer);
+    uint8_t ry = axis_with_dz(ry_raw, (uint8_t)gcfg->deadzone_inner, (uint8_t)gcfg->deadzone_outer);
 
     apply_mode_sticks(s, lx, ly, rx, ry);
 }

@@ -1,17 +1,28 @@
 #include "config_store.h"
-#include <string.h>
-#include <stdio.h>
+#include "config.h"
 
 #include "hardware/flash.h"
 #include "hardware/sync.h"
-#include "pico/flash.h"
+#include "pico/stdlib.h"
 
-// ── Flash location ────────────────────────────────────────────────────────────
-// Last 4 KB sector of flash.  PICO_FLASH_SIZE_BYTES is set by the board file
-// (4 MB for Pico 2 W).  XIP_BASE is 0x10000000.
-#define FLASH_CONFIG_OFFSET  (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
+#include <pb_encode.h>
+#include <pb_decode.h>
+#include <string.h>
+#include <stdio.h>
 
-// ── Name tables ───────────────────────────────────────────────────────────────
+// ── Flash addressing ──────────────────────────────────────────────────────
+#define FLASH_CONFIG_OFFSET   (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
+#define FLASH_CONFIG_ADDR     (XIP_BASE + FLASH_CONFIG_OFFSET)
+#define CONFIG_MAGIC          0xDEADC0DCU
+#define CONFIG_BUF_SIZE       (FLASH_SECTOR_SIZE - 8)
+
+// ── Live config state ─────────────────────────────────────────────────────
+static MapleSyrupConfig s_cfg;
+
+// ── Runtime state ─────────────────────────────────────────────────────────
+uint32_t g_current_game_hash = 0;
+
+// ── Name tables ───────────────────────────────────────────────────────────
 const char *const k_src_btn_names[SRC_BTN_COUNT] = {
     "A", "B", "X", "Y",
     "L_SHOULDER", "R_SHOULDER",
@@ -26,7 +37,7 @@ const char *const k_dc_slot_names[DC_NUM_BUTTONS] = {
     "Z", "Y", "X", "D",
 };
 
-// ── Default button remap ──────────────────────────────────────────────────────
+// ── Default button remap ──────────────────────────────────────────────────
 const uint8_t k_default_remap[DC_NUM_BUTTONS] = {
     SRC_BTN_R_SHOULDER,  // C
     SRC_BTN_B,           // B
@@ -42,128 +53,131 @@ const uint8_t k_default_remap[DC_NUM_BUTTONS] = {
     SRC_BTN_NONE,        // D  (no default)
 };
 
-// ── Runtime state ─────────────────────────────────────────────────────────────
-static bt2maple_config_t g_config;
-uint32_t g_current_game_hash = 0;
-
-// ── CRC helper ────────────────────────────────────────────────────────────────
-static uint32_t compute_crc(const bt2maple_config_t *cfg) {
-    const uint8_t *p = (const uint8_t *)cfg;
-    uint32_t crc = 0;
-    // XOR all bytes except the trailing crc field itself
-    size_t len = sizeof(*cfg) - sizeof(cfg->crc);
-    for (size_t i = 0; i < len; i++) crc ^= p[i];
-    return crc;
+// ── Default values ─────────────────────────────────────────────────────────
+static void apply_defaults(void) {
+    s_cfg.config_version = CONFIG_VERSION;
+    s_cfg.has_gpio   = true;
+    s_cfg.gpio       = (GpioConfig)GpioConfig_init_default;
+    s_cfg.has_global = true;
+    s_cfg.global     = (GlobalConfig)GlobalConfig_init_default;
+    s_cfg.games_count = 0;
 }
 
-// ── Defaults ──────────────────────────────────────────────────────────────────
-static void apply_defaults(bt2maple_config_t *cfg) {
-    memset(cfg, 0, sizeof(*cfg));
-    cfg->magic   = CONFIG_MAGIC;
-    cfg->version = CONFIG_VERSION;
-
-    global_cfg_t *g = &cfg->global;
-    g->deadzone_inner    = 10;   // 10% inner dead zone
-    g->deadzone_outer    = 95;   // 95% outer saturation
-    g->trigger_threshold = 30;   // ~12% of full scale
-    g->rapid_fire_hz     = 10;
-    g->rapid_fire_mask   = 0;
-    g->invert_lx         = 0;
-    g->invert_ly         = 0;
-    g->invert_rx         = 0;
-    g->invert_ry         = 0;
-    g->default_ctrl_mode = 0;    // CTRL_MODE_STANDARD
-
-    // All game slots empty
-    for (int i = 0; i < MAX_GAME_CFGS; i++) {
-        cfg->games[i].hash = 0;
-        cfg->games[i].flags = 0;
-        cfg->games[i].vmu_bank   = 0xFF;  // auto
-        cfg->games[i].ctrl_mode  = 0xFF;  // global default
-        memset(cfg->games[i].btn_remap, SRC_BTN_NONE, DC_NUM_BUTTONS);
-    }
-    cfg->crc = compute_crc(cfg);
-}
-
-// ── Public API ────────────────────────────────────────────────────────────────
-void config_store_load(void) {
-    const bt2maple_config_t *stored =
-        (const bt2maple_config_t *)(XIP_BASE + FLASH_CONFIG_OFFSET);
-
-    if (stored->magic   == CONFIG_MAGIC &&
-        stored->version == CONFIG_VERSION &&
-        stored->crc     == compute_crc(stored)) {
-        memcpy(&g_config, stored, sizeof(g_config));
-        printf("[cfg] loaded from flash\n");
-    } else {
-        apply_defaults(&g_config);
-        printf("[cfg] using defaults (flash blank or corrupt)\n");
-    }
-}
-
-void config_store_save(void) {
-    g_config.magic   = CONFIG_MAGIC;
-    g_config.version = CONFIG_VERSION;
-    g_config.crc     = compute_crc(&g_config);
-
-    // Prepare a sector-sized buffer (4 KB), copy config, pad rest with 0xFF.
-    static uint8_t buf[FLASH_SECTOR_SIZE];
-    memset(buf, 0xFF, sizeof(buf));
-    memcpy(buf, &g_config, sizeof(g_config));
-
-    // Erase + program.  Interrupts must be disabled; Core 1 must not be running.
-    uint32_t ints = save_and_disable_interrupts();
-    flash_range_erase(FLASH_CONFIG_OFFSET, FLASH_SECTOR_SIZE);
-    flash_range_program(FLASH_CONFIG_OFFSET, buf, FLASH_SECTOR_SIZE);
-    restore_interrupts(ints);
-    printf("[cfg] saved to flash\n");
-}
-
-global_cfg_t *config_global(void) {
-    return &g_config.global;
-}
+// ── Accessors ─────────────────────────────────────────────────────────────
+gpio_cfg_t   *config_gpio(void)   { return &s_cfg.gpio; }
+global_cfg_t *config_global(void) { return &s_cfg.global; }
 
 game_cfg_t *config_game_by_hash(uint32_t hash) {
     if (!hash) return NULL;
-    for (int i = 0; i < MAX_GAME_CFGS; i++) {
-        if ((g_config.games[i].flags & 1) && g_config.games[i].hash == hash)
-            return &g_config.games[i];
+    for (pb_size_t i = 0; i < s_cfg.games_count; i++) {
+        if (s_cfg.games[i].hash == hash)
+            return &s_cfg.games[i];
     }
     return NULL;
 }
 
 game_cfg_t *config_game_slot(uint8_t idx) {
-    if (idx >= MAX_GAME_CFGS) return NULL;
-    return &g_config.games[idx];
+    if (idx >= s_cfg.games_count) return NULL;
+    return &s_cfg.games[idx];
 }
 
 game_cfg_t *config_game_alloc(uint32_t hash) {
-    // Existing entry?
     game_cfg_t *existing = config_game_by_hash(hash);
     if (existing) return existing;
-
-    // Find a free slot
-    for (int i = 0; i < MAX_GAME_CFGS; i++) {
-        if (!(g_config.games[i].flags & 1)) {
-            memset(&g_config.games[i], 0, sizeof(game_cfg_t));
-            g_config.games[i].hash      = hash;
-            g_config.games[i].flags     = 1;
-            g_config.games[i].vmu_bank  = 0xFF;
-            g_config.games[i].ctrl_mode = 0xFF;
-            memset(g_config.games[i].btn_remap, SRC_BTN_NONE, DC_NUM_BUTTONS);
-            snprintf(g_config.games[i].name, sizeof(g_config.games[i].name),
-                     "Game_%08lX", (unsigned long)hash);
-            return &g_config.games[i];
-        }
-    }
-    return NULL;  // all slots full
+    if (s_cfg.games_count >= MAX_GAME_CFGS) return NULL;
+    game_cfg_t *gc = &s_cfg.games[s_cfg.games_count++];
+    *gc = (GameConfig)GameConfig_init_default;
+    gc->hash = hash;
+    // Populate btn_remap_count so callers can iterate all 12 slots
+    gc->btn_remap_count = DC_NUM_BUTTONS;
+    snprintf(gc->name, sizeof(gc->name), "Game_%08lX", (unsigned long)hash);
+    return gc;
 }
 
 void config_game_delete(uint32_t hash) {
-    for (int i = 0; i < MAX_GAME_CFGS; i++) {
-        if ((g_config.games[i].flags & 1) && g_config.games[i].hash == hash) {
-            memset(&g_config.games[i], 0, sizeof(game_cfg_t));
+    for (pb_size_t i = 0; i < s_cfg.games_count; i++) {
+        if (s_cfg.games[i].hash == hash) {
+            pb_size_t remaining = s_cfg.games_count - i - 1;
+            if (remaining > 0)
+                memmove(&s_cfg.games[i], &s_cfg.games[i + 1],
+                        remaining * sizeof(GameConfig));
+            s_cfg.games_count--;
             return;
         }
     }
+}
+
+// ── Persistence ───────────────────────────────────────────────────────────
+void config_store_load(void) {
+    apply_defaults();
+
+    const uint8_t *flash = (const uint8_t *)FLASH_CONFIG_ADDR;
+
+    uint32_t magic;
+    memcpy(&magic, flash, sizeof(magic));
+    if (magic != CONFIG_MAGIC) {
+        printf("[config] Flash blank or corrupt (magic %08lX) — using defaults\n",
+               (unsigned long)magic);
+        return;
+    }
+
+    uint32_t pb_len;
+    memcpy(&pb_len, flash + 4, sizeof(pb_len));
+    if (pb_len == 0 || pb_len > CONFIG_BUF_SIZE) {
+        printf("[config] Invalid payload length %lu — using defaults\n",
+               (unsigned long)pb_len);
+        return;
+    }
+
+    MapleSyrupConfig loaded = {0};
+    pb_istream_t stream = pb_istream_from_buffer(flash + 8, pb_len);
+    if (!pb_decode(&stream, MapleSyrupConfig_fields, &loaded)) {
+        printf("[config] Decode failed: %s — using defaults\n", stream.errmsg);
+        return;
+    }
+
+    if (loaded.config_version != CONFIG_VERSION) {
+        printf("[config] Version mismatch (stored=%u, current=%u) — using defaults\n",
+               (unsigned)loaded.config_version, CONFIG_VERSION);
+        return;
+    }
+
+    s_cfg = loaded;
+    if (!s_cfg.has_gpio)   s_cfg.gpio   = (GpioConfig)GpioConfig_init_default;
+    if (!s_cfg.has_global) s_cfg.global = (GlobalConfig)GlobalConfig_init_default;
+    s_cfg.has_gpio   = true;
+    s_cfg.has_global = true;
+
+    printf("[config] Loaded %u game(s) from flash\n", (unsigned)s_cfg.games_count);
+}
+
+void config_store_save(void) {
+    static uint8_t encode_buf[CONFIG_BUF_SIZE];
+    pb_ostream_t stream = pb_ostream_from_buffer(encode_buf, sizeof(encode_buf));
+
+    s_cfg.config_version = CONFIG_VERSION;
+    s_cfg.has_gpio   = true;
+    s_cfg.has_global = true;
+
+    if (!pb_encode(&stream, MapleSyrupConfig_fields, &s_cfg)) {
+        printf("[config] Encode failed: %s\n", stream.errmsg);
+        return;
+    }
+
+    uint32_t pb_len = (uint32_t)stream.bytes_written;
+
+    static uint8_t sector_buf[FLASH_SECTOR_SIZE];
+    memset(sector_buf, 0xFF, sizeof(sector_buf));
+
+    uint32_t magic = CONFIG_MAGIC;
+    memcpy(sector_buf,     &magic,      4);
+    memcpy(sector_buf + 4, &pb_len,     4);
+    memcpy(sector_buf + 8, encode_buf,  pb_len);
+
+    uint32_t ints = save_and_disable_interrupts();
+    flash_range_erase(FLASH_CONFIG_OFFSET, FLASH_SECTOR_SIZE);
+    flash_range_program(FLASH_CONFIG_OFFSET, sector_buf, FLASH_SECTOR_SIZE);
+    restore_interrupts(ints);
+
+    printf("[config] Saved %lu bytes to flash\n", (unsigned long)pb_len);
 }

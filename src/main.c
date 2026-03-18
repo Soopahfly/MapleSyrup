@@ -24,9 +24,10 @@ int main(void) {
     sleep_ms(50);  // debounce
 
     if (!gpio_get(PIN_MODE_BTN)) {
-        // Config mode — mount SD so we can list game saves; never returns.
-        bool sd_ok = sd_init();
+        // Config mode — load config first so GPIO pin values are available,
+        // then mount SD so we can list game saves; never returns.
         config_store_load();
+        bool sd_ok = sd_init();
         webconfig_run(sd_ok);
     }
 

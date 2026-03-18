@@ -14,7 +14,7 @@ set(CMAKE_C_STANDARD 11)
 
 # ── Version ───────────────────────────────────────────────────────────────────
 set(BT2MAPLE_VERSION_MAJOR 0)
-set(BT2MAPLE_VERSION_MINOR 3)
+set(BT2MAPLE_VERSION_MINOR 4)
 set(BT2MAPLE_VERSION_PATCH 0)
 set(BT2MAPLE_VERSION "${BT2MAPLE_VERSION_MAJOR}.${BT2MAPLE_VERSION_MINOR}.${BT2MAPLE_VERSION_PATCH}")
 message(STATUS "bt2maple version: ${BT2MAPLE_VERSION}")
@@ -46,10 +46,27 @@ FetchContent_Declare(
     SOURCE_SUBDIR  src
 )
 
+FetchContent_Declare(
+    nanopb
+    GIT_REPOSITORY https://github.com/nanopb/nanopb.git
+    GIT_TAG        0.3.9.8
+    GIT_SHALLOW    TRUE
+)
+FetchContent_Populate(nanopb)
+
 pico_sdk_init()
 
 # ── no-OS-FatFS SD/SPI driver (must be after pico_sdk_init) ──────────────────
 FetchContent_MakeAvailable(no_os_fatfs)
+
+# ── nanopb protobuf runtime ────────────────────────────────────────────────
+# Pre-generated .pb.c/.pb.h files are committed in src/proto/.
+# The runtime itself is just three C files — no cmake library needed.
+set(NANOPB_SRCS
+    ${nanopb_SOURCE_DIR}/pb_encode.c
+    ${nanopb_SOURCE_DIR}/pb_decode.c
+    ${nanopb_SOURCE_DIR}/pb_common.c
+)
 
 # Bluepad32 needs btstack_config.h and sdkconfig.h at compile time.
 # These live in src/ — propagate to the bluepad32 static-library target.
@@ -73,6 +90,8 @@ add_executable(bt2maple
     src/storage/sd_card.c
     src/webconfig/webconfig.c
     # src/usb/usb_host.c  # disabled while validating BT — re-enable with tinyusb libs
+    src/proto/maplesyrup.pb.c
+    ${NANOPB_SRCS}
 )
 
 pico_generate_pio_header(bt2maple ${CMAKE_CURRENT_LIST_DIR}/src/maple/maple.pio)
@@ -93,6 +112,9 @@ target_include_directories(bt2maple PRIVATE
     ${no_os_fatfs_SOURCE_DIR}/src/sd_driver
     ${no_os_fatfs_SOURCE_DIR}/src/sd_driver/SPI
     ${no_os_fatfs_SOURCE_DIR}/src/include
+    # nanopb runtime headers
+    ${nanopb_SOURCE_DIR}
+    ${CMAKE_CURRENT_LIST_DIR}/src/proto
 )
 
 # Bluepad32 also needs to find sdkconfig.h / btstack_config.h from src/
@@ -154,4 +176,5 @@ target_compile_definitions(bt2maple PRIVATE
     BT2MAPLE_VERSION_MINOR=${BT2MAPLE_VERSION_MINOR}
     BT2MAPLE_VERSION_PATCH=${BT2MAPLE_VERSION_PATCH}
     BT2MAPLE_VERSION_STRING="${BT2MAPLE_VERSION}"
+    CONFIG_VERSION=2
 )

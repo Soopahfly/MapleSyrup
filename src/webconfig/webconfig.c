@@ -51,6 +51,10 @@ static void cmd_help(void) {
         "    Keys: deadzone_inner, deadzone_outer, trigger_threshold,\n"
         "          rapid_fire_hz, rapid_fire_mask, invert_lx, invert_ly,\n"
         "          invert_rx, invert_ry, default_ctrl_mode\n"
+        "  getpins           - show all GPIO pin assignments\n"
+        "  setpin PIN VALUE  - set a GPIO pin number\n"
+        "    Pins: maple_sdcka, maple_sdckb, buzzer, oled_sda, oled_scl,\n"
+        "          sd_sck, sd_tx, sd_rx, sd_cs, mode_btn\n"
         "  games             - list all stored game configs\n"
         "  game HASH         - show config for game (hex hash)\n"
         "  setgame HASH KEY VALUE - set a game config value\n"
@@ -72,10 +76,10 @@ static void cmd_get(void) {
     printf("trigger_threshold=%u\n",g->trigger_threshold);
     printf("rapid_fire_hz=%u\n",    g->rapid_fire_hz);
     printf("rapid_fire_mask=%u\n",  g->rapid_fire_mask);
-    printf("invert_lx=%u\n",        g->invert_lx);
-    printf("invert_ly=%u\n",        g->invert_ly);
-    printf("invert_rx=%u\n",        g->invert_rx);
-    printf("invert_ry=%u\n",        g->invert_ry);
+    printf("invert_lx=%u\n",        (unsigned)g->invert_lx);
+    printf("invert_ly=%u\n",        (unsigned)g->invert_ly);
+    printf("invert_rx=%u\n",        (unsigned)g->invert_rx);
+    printf("invert_ry=%u\n",        (unsigned)g->invert_ry);
     printf("default_ctrl_mode=%u\n",g->default_ctrl_mode);
     print_ok();
 }
@@ -88,25 +92,65 @@ static void cmd_set(char *args) {
     global_cfg_t *g = config_global();
     int v = atoi(val);
 
-    if      (!strcmp(key, "deadzone_inner"))    { if(v<0||v>50)  {print_err("0-50"); return;} g->deadzone_inner=(uint8_t)v; }
-    else if (!strcmp(key, "deadzone_outer"))    { if(v<51||v>100){print_err("51-100");return;} g->deadzone_outer=(uint8_t)v; }
-    else if (!strcmp(key, "trigger_threshold")) { if(v<0||v>255) {print_err("0-255");return;} g->trigger_threshold=(uint8_t)v; }
-    else if (!strcmp(key, "rapid_fire_hz"))     { if(v<1||v>30)  {print_err("1-30"); return;} g->rapid_fire_hz=(uint8_t)v; }
-    else if (!strcmp(key, "rapid_fire_mask"))   { g->rapid_fire_mask=(uint16_t)v; }
-    else if (!strcmp(key, "invert_lx"))         { g->invert_lx=(uint8_t)(v?1:0); }
-    else if (!strcmp(key, "invert_ly"))         { g->invert_ly=(uint8_t)(v?1:0); }
-    else if (!strcmp(key, "invert_rx"))         { g->invert_rx=(uint8_t)(v?1:0); }
-    else if (!strcmp(key, "invert_ry"))         { g->invert_ry=(uint8_t)(v?1:0); }
-    else if (!strcmp(key, "default_ctrl_mode")) { if(v<0||v>=(int)CTRL_MODE_COUNT){print_err("0-4");return;} g->default_ctrl_mode=(uint8_t)v; }
+    if      (!strcmp(key, "deadzone_inner"))    { if(v<0||v>50)  {print_err("0-50"); return;} g->deadzone_inner=(uint32_t)v; }
+    else if (!strcmp(key, "deadzone_outer"))    { if(v<51||v>100){print_err("51-100");return;} g->deadzone_outer=(uint32_t)v; }
+    else if (!strcmp(key, "trigger_threshold")) { if(v<0||v>255) {print_err("0-255");return;} g->trigger_threshold=(uint32_t)v; }
+    else if (!strcmp(key, "rapid_fire_hz"))     { if(v<1||v>30)  {print_err("1-30"); return;} g->rapid_fire_hz=(uint32_t)v; }
+    else if (!strcmp(key, "rapid_fire_mask"))   { g->rapid_fire_mask=(uint32_t)v; }
+    else if (!strcmp(key, "invert_lx"))         { g->invert_lx=(bool)(v?1:0); }
+    else if (!strcmp(key, "invert_ly"))         { g->invert_ly=(bool)(v?1:0); }
+    else if (!strcmp(key, "invert_rx"))         { g->invert_rx=(bool)(v?1:0); }
+    else if (!strcmp(key, "invert_ry"))         { g->invert_ry=(bool)(v?1:0); }
+    else if (!strcmp(key, "default_ctrl_mode")) { if(v<0||v>=(int)CTRL_MODE_COUNT){print_err("0-4");return;} g->default_ctrl_mode=(uint32_t)v; }
     else { print_err("unknown key"); return; }
+    print_ok();
+}
+
+static void cmd_getpins(void) {
+    gpio_cfg_t *p = config_gpio();
+    printf("maple_sdcka=%d\n", p->maple_sdcka);
+    printf("maple_sdckb=%d\n", p->maple_sdckb);
+    printf("buzzer=%d\n",      p->buzzer);
+    printf("oled_sda=%d\n",    p->oled_sda);
+    printf("oled_scl=%d\n",    p->oled_scl);
+    printf("sd_sck=%d\n",      p->sd_sck);
+    printf("sd_tx=%d\n",       p->sd_tx);
+    printf("sd_rx=%d\n",       p->sd_rx);
+    printf("sd_cs=%d\n",       p->sd_cs);
+    printf("mode_btn=%d\n",    p->mode_btn);
+    print_ok();
+}
+
+static void cmd_setpin(char *args) {
+    char *pin_name = next_tok(&args);
+    char *val      = next_tok(&args);
+    if (!pin_name || !val) { print_err("usage: setpin PIN VALUE"); return; }
+
+    gpio_cfg_t *p = config_gpio();
+    int v = atoi(val);
+    if (v < 0 || v > 29) { print_err("pin must be 0-29"); return; }
+
+    if      (!strcmp(pin_name, "maple_sdcka")) p->maple_sdcka = v;
+    else if (!strcmp(pin_name, "maple_sdckb")) p->maple_sdckb = v;
+    else if (!strcmp(pin_name, "buzzer"))      p->buzzer      = v;
+    else if (!strcmp(pin_name, "oled_sda"))    p->oled_sda    = v;
+    else if (!strcmp(pin_name, "oled_scl"))    p->oled_scl    = v;
+    else if (!strcmp(pin_name, "sd_sck"))      p->sd_sck      = v;
+    else if (!strcmp(pin_name, "sd_tx"))       p->sd_tx       = v;
+    else if (!strcmp(pin_name, "sd_rx"))       p->sd_rx       = v;
+    else if (!strcmp(pin_name, "sd_cs"))       p->sd_cs       = v;
+    else if (!strcmp(pin_name, "mode_btn"))    p->mode_btn    = v;
+    else { print_err("unknown pin name (use 'getpins' to list)"); return; }
     print_ok();
 }
 
 static void cmd_games(void) {
     int count = 0;
+    int total = (int)(config_gpio() ? 0 : 0); // unused — suppress warning
+    // Iterate active game slots (dense array in new protobuf model)
     for (int i = 0; i < MAX_GAME_CFGS; i++) {
         game_cfg_t *gc = config_game_slot((uint8_t)i);
-        if (!(gc->flags & 1)) continue;
+        if (!gc) break;  // past end of active entries
         printf("hash=%08lX name=%s vmu_bank=%s ctrl_mode=%s\n",
                (unsigned long)gc->hash,
                gc->name,
@@ -130,7 +174,7 @@ static void cmd_game(char *args) {
     printf("vmu_bank=%s\n",  gc->vmu_bank  == 0xFF ? "auto"    : (char[4]){(char)('0'+gc->vmu_bank),0});
     printf("ctrl_mode=%s\n", gc->ctrl_mode == 0xFF ? "default" : (char[2]){(char)('0'+gc->ctrl_mode),0});
     for (int s = 0; s < DC_NUM_BUTTONS; s++) {
-        uint8_t src = gc->btn_remap[s];
+        uint32_t src = (s < (int)gc->btn_remap_count) ? gc->btn_remap[s] : SRC_BTN_NONE;
         printf("remap_%s=%s\n", k_dc_slot_names[s],
                src == SRC_BTN_NONE ? "default"
                                    : (src < SRC_BTN_COUNT ? k_src_btn_names[src] : "?"));
@@ -157,14 +201,14 @@ static void cmd_setgame(char *args) {
         else {
             int v = atoi(val);
             if (v < 0 || v > 9) { print_err("0-9 or auto"); return; }
-            gc->vmu_bank = (uint8_t)v;
+            gc->vmu_bank = (uint32_t)v;
         }
     } else if (!strcmp(key, "ctrl_mode")) {
         if (!strcmp(val, "default")) gc->ctrl_mode = 0xFF;
         else {
             int v = atoi(val);
             if (v < 0 || v >= (int)CTRL_MODE_COUNT) { print_err("0-4 or default"); return; }
-            gc->ctrl_mode = (uint8_t)v;
+            gc->ctrl_mode = (uint32_t)v;
         }
     } else {
         // Check if it's a remap_SLOT key
@@ -177,16 +221,19 @@ static void cmd_setgame(char *args) {
             }
             if (slot < 0) { print_err("unknown DC slot"); return; }
 
-            uint8_t src = SRC_BTN_NONE;
+            uint32_t src = SRC_BTN_NONE;
             if (strcmp(val, "default") && strcmp(val, "none")) {
                 bool found = false;
                 for (int b = 0; b < SRC_BTN_COUNT; b++) {
                     if (!strcasecmp(val, k_src_btn_names[b])) {
-                        src = (uint8_t)b; found = true; break;
+                        src = (uint32_t)b; found = true; break;
                     }
                 }
                 if (!found) { print_err("unknown source button (use 'srcs' to list)"); return; }
             }
+            // Ensure btn_remap_count covers this slot
+            if ((pb_size_t)(slot + 1) > gc->btn_remap_count)
+                gc->btn_remap_count = (pb_size_t)(slot + 1);
             gc->btn_remap[slot] = src;
         } else {
             print_err("unknown key"); return;
@@ -224,6 +271,8 @@ static void dispatch(char *line) {
     if      (!strcmp(verb, "help"))    cmd_help();
     else if (!strcmp(verb, "get"))     cmd_get();
     else if (!strcmp(verb, "set"))     cmd_set(pos);
+    else if (!strcmp(verb, "getpins")) cmd_getpins();
+    else if (!strcmp(verb, "setpin"))  cmd_setpin(pos);
     else if (!strcmp(verb, "games"))   cmd_games();
     else if (!strcmp(verb, "game"))    cmd_game(pos);
     else if (!strcmp(verb, "setgame")) cmd_setgame(pos);

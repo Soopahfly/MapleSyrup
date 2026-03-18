@@ -19,8 +19,26 @@
 #include <stdio.h>
 #include <string.h>
 
-// ── Forward declaration ────────────────────────────────────────────────────────
+// ── Forward declarations ───────────────────────────────────────────────────────
 struct uni_platform* get_bt2maple_platform(void);
+
+// ── Diagnostics ───────────────────────────────────────────────────────────────
+// LED blink patterns (requires CYW43 to be initialised first):
+//   2 blinks = cyw43_arch_init() succeeded
+//   3 blinks = platform registered, about to call uni_init()
+//   5 blinks = controller paired and ready
+//   solid    = scanning for controllers
+
+// Blink LED n times rapidly for diagnostics
+static void led_blink(int n) {
+    for (int i = 0; i < n; i++) {
+        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
+        sleep_ms(100);
+        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);
+        sleep_ms(100);
+    }
+    sleep_ms(500);
+}
 
 // ── Platform callbacks ─────────────────────────────────────────────────────────
 
@@ -30,9 +48,12 @@ static void platform_init(int argc, const char** argv) {
 }
 
 static void platform_on_init_complete(void) {
-    printf("[bt] Bluepad32 init complete — scanning for gamepads\n");
-    // Enable LED to signal ready state
-    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);
+    printf("[bt] Bluepad32 init complete — starting scan\n");
+    // CRITICAL: must call this or Bluepad32 never discovers controllers
+    uni_bt_start_scanning_and_autoconnect_unsafe();
+    printf("[bt] scanning started — LED solid\n");
+    // LED solid = scanning/ready
+    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
 }
 
 static uni_error_t platform_on_device_discovered(bd_addr_t addr, const char* name,
@@ -57,8 +78,9 @@ static void platform_on_device_disconnected(uni_hid_device_t* d) {
 static uni_error_t platform_on_device_ready(uni_hid_device_t* d) {
     (void)d;
     printf("[bt] device ready (type=%d)\n", d->controller_type);
-    // Signal successful connection via LED
-    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
+    // 5 rapid blinks = controller paired and ready
+    led_blink(5);
+    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1); // solid = active
     return UNI_ERROR_SUCCESS;
 }
 
@@ -104,24 +126,31 @@ struct uni_platform* get_bt2maple_platform(void) {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 void bt_init(void) {
+    printf("[bt] cyw43_arch_init starting\n");
+
+    // Matches Bluepad32's official pico_w example exactly:
+    // cyw43_arch_init() IS called by the app, not internally by uni_init().
     if (cyw43_arch_init()) {
-        printf("[bt] cyw43_arch_init failed!\n");
-        return;
+        printf("[bt] cyw43_arch_init FAILED\n");
+        // Hang — no LED available without CYW43
+        while (1) tight_loop_contents();
     }
 
-    // Turn on LED to indicate BT initialising
-    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
+    // ── Stage 1: CYW43 up — 2 blinks ────────────────────────────────────────
+    // If you see exactly 2 blinks, CYW43 hardware is working.
+    printf("[bt] cyw43_arch_init OK — 2 blinks\n");
+    led_blink(2);
 
-    // Register our platform before uni_init()
+    // ── Stage 2: Registering platform — 3 blinks ────────────────────────────
+    printf("[bt] registering Bluepad32 platform\n");
     uni_platform_set_custom(get_bt2maple_platform());
+    led_blink(3);
 
-    // Initialise Bluepad32 (sets up BTstack + HID host internally)
+    // ── Stage 3: uni_init — LED off while BTstack initialises ───────────────
+    // platform_on_init_complete() will turn LED solid + start scanning
+    printf("[bt] calling uni_init\n");
     uni_init(0, NULL);
 
-    printf("[bt] Bluepad32 init done\n");
-}
-
-void bt_run(void) {
-    // Runs the BTstack event loop — never returns
-    btstack_run_loop_execute();
+    printf("[bt] starting BTstack run loop\n");
+    btstack_run_loop_execute(); // Never returns
 }

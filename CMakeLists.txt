@@ -14,7 +14,7 @@ set(CMAKE_C_STANDARD 11)
 
 # ── Version ───────────────────────────────────────────────────────────────────
 set(BT2MAPLE_VERSION_MAJOR 0)
-set(BT2MAPLE_VERSION_MINOR 2)
+set(BT2MAPLE_VERSION_MINOR 3)
 set(BT2MAPLE_VERSION_PATCH 0)
 set(BT2MAPLE_VERSION "${BT2MAPLE_VERSION_MAJOR}.${BT2MAPLE_VERSION_MINOR}.${BT2MAPLE_VERSION_PATCH}")
 message(STATUS "bt2maple version: ${BT2MAPLE_VERSION}")

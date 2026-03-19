@@ -31,7 +31,7 @@ start:
     wait 1 pin 1            ; Wait until SDCKB is HIGH (idle)
     wait 0 pin 1            ; Wait for SDCKB to go LOW  (SOP in progress)
     wait 1 pin 1            ; Wait for SDCKB to go HIGH (SOP complete)
-    push noblock            ; Discard accumulated SOP bits; reset ISR bit counter
+    mov isr null            ; Clear ISR + reset input-shift counter (no FIFO push)
     mov x pins              ; Capture current pin state (both HIGH) as baseline
 loop:
     mov y pins              ; Sample current pin state

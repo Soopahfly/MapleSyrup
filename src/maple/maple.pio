@@ -29,10 +29,14 @@
 start:
     wait 1 pin 0            ; Wait until SDCKA is HIGH (idle / post-EOP)
     wait 1 pin 1            ; Wait until SDCKB is HIGH (idle)
-    wait 0 pin 1            ; Wait for SDCKB to go LOW  (SOP in progress)
-    wait 1 pin 1            ; Wait for SDCKB to go HIGH (SOP complete)
+    wait 0 pin 1            ; Wait for SDCKB LOW  (SOP begins — SDCKA goes LOW first,
+                            ;   then SDCKB follows; SDCKB then oscillates during sync
+                            ;   pulses while SDCKA stays LOW the whole time)
+    wait 1 pin 0            ; Wait for SDCKA HIGH (SOP ends — SDCKA only goes HIGH at
+                            ;   the very end of SOP, after all sync pulses complete;
+                            ;   using SDCKB HIGH would fire mid-SOP on the first pulse)
     mov isr null            ; Clear ISR + reset input-shift counter (no FIFO push)
-    mov x pins              ; Capture current pin state (both HIGH) as baseline
+    mov x pins              ; Capture pin state (SDCKA=1, SDCKB=0 or 1 at SOP exit)
 loop:
     mov y pins              ; Sample current pin state
     jmp x!=y check_val      ; Act on any change

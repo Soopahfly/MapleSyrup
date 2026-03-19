@@ -6,6 +6,29 @@ Pairs any Bluetooth HID gamepad (Xbox Series, PS4/DS4, PS5/DualSense, 8BitDo, et
 
 ---
 
+## Status
+
+**v0.4.0 — firmware complete, hardware bring-up in progress.**
+
+The firmware builds and boots cleanly on the Pico 2 W. Physical assembly (Maple bus wiring, SD card, OLED) is underway. The table below tracks what is implemented vs verified on real hardware.
+
+| Feature | Implemented | Hardware tested |
+|---|---|---|
+| Maple bus controller emulation | ✅ | 🔲 |
+| Bluetooth HID (Bluepad32) | ✅ | 🔲 |
+| VMU emulation (RAM-backed) | ✅ | 🔲 |
+| SD card VMU persistence | ✅ | 🔲 |
+| Per-game VMU bank selection | ✅ | 🔲 |
+| OLED VMU LCD mirror | ✅ | 🔲 |
+| Rumble forwarding | ✅ | 🔲 |
+| Protobuf config storage (flash) | ✅ | 🔲 |
+| Web config UI (WiFi AP) | ✅ | 🔲 |
+| Controller mode switching | ✅ | 🔲 |
+| Rapid fire | ✅ | 🔲 |
+| Per-game button remapping | ✅ | 🔲 |
+
+---
+
 ## Features
 
 - **Bluetooth HID** via Bluepad32 — Xbox Series X/S, PS4, PS5, 8BitDo, Nintendo Pro Controller, and more
@@ -14,8 +37,9 @@ Pairs any Bluetooth HID gamepad (Xbox Series, PS4/DS4, PS5/DualSense, 8BitDo, et
 - **OLED display** — 128×64 SSD1306, mirrors the VMU 48×32 LCD in real time
 - **Per-game VMU banks** — GDEMU/OpenMenu Game ID command maps each title to its own save slot
 - **Rumble forwarding** — Dreamcast SET_CONDITION vibration commands forwarded to the paired controller
-- **Web config console** — hold config button at boot, connect USB, open `tools/webconfig.html` in Chrome
+- **Web config** — hold config button at boot, connect to MapleSyrup WiFi AP, open `http://192.168.7.1`
 - **5 controller modes** — Standard, Dual Analog, Twin Stick, Fight Stick, Racing (hot-switchable at runtime)
+- **No USB device** — the adapter presents zero USB interfaces to the host; no drivers, no COM port conflicts
 
 ---
 
@@ -24,48 +48,83 @@ Pairs any Bluetooth HID gamepad (Xbox Series, PS4/DS4, PS5/DualSense, 8BitDo, et
 | Component | Required |
 |---|---|
 | Raspberry Pi Pico 2 W (RP2350 + CYW43439) | Yes |
-| Maple bus connector (female MX 5-pin) | Yes |
-| MicroSD card + SPI breakout | Optional (VMU saves) |
-| SSD1306 128×64 OLED (I2C) | Optional (VMU LCD mirror) |
-| Momentary switch (config mode) | Optional |
+| Dreamcast controller port cable / connector | Yes |
+| MicroSD card + SPI breakout | Optional (VMU saves to RAM otherwise) |
+| SSD1306 128×64 OLED (I²C) | Optional (VMU LCD mirror) |
+| Momentary switch (config mode button) | Optional |
 
 ### Pin assignments
 
-| Signal | GPIO |
-|---|---|
-| Maple SDCKA | 6 |
-| Maple SDCKB | 7 |
-| SD SCK | 10 |
-| SD MOSI | 11 |
-| SD MISO | 12 |
-| SD CS | 13 |
-| OLED SDA (I2C0) | 4 |
-| OLED SCL (I2C0) | 5 |
-| Config mode button | 22 → GND |
-| UART TX (debug) | 0 |
-| UART RX (debug) | 1 |
+| Signal | GPIO | Physical pin |
+|---|---|---|
+| Maple SDCKA | 16 | 21 |
+| Maple SDCKB | 17 | 22 |
+| SD SCK | 10 | 14 |
+| SD MOSI (TX) | 11 | 15 |
+| SD MISO (RX) | 12 | 16 |
+| SD CS | 13 | 17 |
+| OLED SDA (I²C0) | 4 | 6 |
+| OLED SCL (I²C0) | 5 | 7 |
+| Buzzer (PWM) | 3 | 5 |
+| Config mode button | 22 → GND | 29 → GND |
+| UART TX (debug) | 0 | 1 |
+| UART RX (debug) | 1 | 2 |
 
-Maple port wiring: pin 1 = SDCKA, pin 3 = SDCKB, pin 4 = GND, pin 5 = +5 V (do not connect +5 V to Pico — use bus power only for reference).
+### Maple port wiring
+
+```
+  ┌─────────────┐
+  │  1  2  3   │   (looking into the female socket on the Dreamcast)
+  │    4   5   │
+  └─────────────┘
+
+  Pin 1 — SDCKA  → GPIO 16
+  Pin 2 — +5 V   → VSYS (Pico pin 39) — powers the board from the Dreamcast
+  Pin 3 — SDCKB  → GPIO 17
+  Pin 4 — GND    → GND
+  Pin 5 — Sense  → GND via 200 Ω resistor (tells the DC a controller is present)
+```
+
+> **Wire colours vary** — especially on third-party extension cables. Always probe with a multimeter before soldering. With a known controller plugged into the female end, trace continuity from the male plug pins.
 
 ---
 
 ## Building
 
+### Prerequisites
+
+- [Pico SDK](https://github.com/raspberrypi/pico-sdk) v2.x with `PICO_SDK_PATH` set
+- CMake ≥ 3.13, arm-none-eabi-gcc (GNU Arm Embedded Toolchain)
+- All other dependencies (Bluepad32, BTstack, FatFs, nanopb, lwIP) are fetched automatically by CMake at configure time — no submodules required
+
 ```bash
-git clone --recurse-submodules https://github.com/Soopahfly/MapleSyrup.git
+git clone https://github.com/Soopahfly/MapleSyrup.git
 cd MapleSyrup
 mkdir build && cd build
-cmake .. -DPICO_SDK_PATH=/path/to/pico-sdk -DPICO_BOARD=pico2_w
-cmake --build . --target bt2maple
+cmake .. -DPICO_BOARD=pico2_w
+cmake --build . --target bt2maple -j4
 ```
 
-Flash `bt2maple.uf2` to the Pico 2 W by holding BOOTSEL while connecting USB, then copying the UF2 to the mass-storage drive that appears.
+### Flashing
+
+Hold **BOOTSEL** on the Pico while connecting USB. A mass-storage drive appears — copy `bt2maple.uf2` onto it.
+
+A pre-built UF2 for the current release is included at the repo root (`bt2maple.uf2`) if you don't want to build from source.
+
+#### Generating UF2 on Windows (if picotool is unavailable)
+
+```powershell
+# From the build directory:
+powershell -ExecutionPolicy Bypass -File ..\make_uf2.ps1
+```
+
+`make_uf2.ps1` reads `bt2maple.bin` and writes a valid UF2 with the correct RP2350 family ID (`0xE48BFF59`).
 
 ---
 
 ## Controller Mode Switching
 
-Hold **SELECT** and press a face button for 1 second to switch mode:
+Hold **SELECT** and press a face button for 1 second:
 
 | Combo | Mode |
 |---|---|
@@ -78,12 +137,12 @@ Hold **SELECT** and press a face button for 1 second to switch mode:
 
 ---
 
-## Web Config Console
+## Web Config
 
-1. Hold the **config button** (GPIO 22 shorted to GND) while plugging the Pico into USB.
-2. Open `tools/webconfig.html` from this repository in **Chrome or Edge** (Web Serial API required).
-3. Click **Connect via USB Serial** and select the MapleSyrup device.
-4. Configure settings, click **Save & Reboot** when done.
+1. Hold the **config button** (GPIO 22 → GND) while powering on.
+2. On your phone or PC, connect to the **MapleSyrup** WiFi network (password: `maplesyrup`).
+3. Open `http://192.168.7.1` in a browser.
+4. Configure settings and hit **Save** — config is written to flash and survives reboots.
 
 Settings available:
 - Analog stick deadzones (inner / outer)
@@ -94,66 +153,64 @@ Settings available:
 - Per-game VMU bank override
 - Per-game controller mode override
 
-Config is stored in the last 4 KB sector of the Pico's internal flash — survives power cycles and firmware updates that don't erase that sector.
+Config is stored as a [nanopb](https://jpa.kapsi.fi/nanopb/) protobuf blob in the last 4 KB flash sector. It is forwards-compatible — adding new fields in a future firmware version will not corrupt existing saved config.
+
+> **Debug output**: UART on GPIO 0 TX / GPIO 1 RX at 115200 baud. The device intentionally presents no USB interfaces to the host — there is no COM port, no driver needed.
 
 ---
 
 ## Input Lag
 
 ~8–10 ms end-to-end, dominated by the Bluetooth Classic HID poll interval.
-The Maple response path (PIO state machine) adds < 0.1 ms.
+The Maple bus response path (PIO state machine) adds < 0.1 ms.
 
 ---
 
 ## Roadmap
 
-Planned features roughly in priority order. Pull requests welcome.
-
-### v0.3 — Config & UX Polish
-- [ ] Web Serial API tool improvements (drag-and-drop button remap, live preview)
-- [ ] OLED status screen: show current mode, BT connection state, VMU bank
-- [ ] Persist controller mode selection across reboots (store in config flash)
-- [ ] Config button hold-duration LED feedback (blink count = boot mode)
-
-### v0.4 — USB Wired Controller Support
-- [ ] Re-enable TinyUSB host mode (resolve CYW43 init ordering conflict)
-- [ ] Support wired USB HID controllers via the Pico's USB port
-- [ ] Auto-detect USB vs Bluetooth and route accordingly
+### Immediate — hardware validation
+- [ ] Maple bus: Dreamcast recognises the adapter as a controller
+- [ ] Button inputs verified in a real game
+- [ ] VMU read/write: save a game, power cycle, confirm reload
+- [ ] SD card persistence
+- [ ] OLED display bring-up
+- [ ] Rumble forwarding
+- [ ] Web config save/load round-trip on real hardware
+- [ ] BT pairing with multiple controller types
 
 ### v0.5 — Advanced Input
-- [ ] Stick response curves (linear / S-curve / custom) in config tool
+- [ ] Stick response curves (linear / S-curve / custom) in web config
 - [ ] Per-game trigger sensitivity override
-- [ ] Turbo / auto-fire scheduler with adjustable duty cycle
 - [ ] Macro buttons (record + replay button sequences)
+- [ ] Config button LED feedback (blink pattern = boot mode)
 
 ### v0.6 — Multi-peripheral
 - [ ] Advertise two controllers on Maple Port A + B simultaneously
 - [ ] Twin-Stick mode using two separate Bluetooth controllers
-- [ ] Racing wheel mode with force-feedback stub (Dreamcast Racing Controller protocol)
+- [ ] Racing wheel force-feedback stub (Dreamcast Racing Controller protocol)
 
 ### v0.7 — VMU Extras
-- [ ] VMU buzzer output via GPIO 26 PWM (play tones from SET_CONDITION)
-- [ ] Virtual VMU LCD preview in the web config tool (real-time via Web Serial)
-- [ ] VMU image import/export over USB (drag .bin onto config page)
-- [ ] Multiple VMU slots selectable per-game via config (not just per-hash)
+- [ ] VMU buzzer output via GPIO 3 PWM (play tones from DC SET_CONDITION)
+- [ ] Virtual VMU LCD preview in web config (real-time)
+- [ ] VMU image import/export via web UI (upload/download .bin)
 
 ### Future / Stretch Goals
 - [ ] BLE controller support (DualSense Edge BLE, Xbox BLE mode)
-- [ ] Dreamcast keyboard emulation (for typing games / DC keyboard peripheral)
-- [ ] Arcade stick mode with 6-button layout auto-detection
-- [ ] OTA firmware update via the web config page
+- [ ] Dreamcast keyboard emulation
+- [ ] OTA firmware update via web config
+- [ ] 3D-printable enclosure design
 
 ---
 
 ## Contributing
 
-This project is open source (MIT). Contributions to any layer are welcome — especially:
-- Improving the `tools/webconfig.html` UI (it's intentionally bare-bones)
-- Adding controller profiles for specific games
-- Hardware enclosure designs
+Open source under MIT. Contributions welcome — especially:
 - Testing with controllers not yet verified
+- Improving the web config UI
+- Adding per-game controller profiles
+- Hardware enclosure designs
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines (coming soon).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ---
 

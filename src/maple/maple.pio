@@ -13,48 +13,59 @@
 ; ─────────────────────────────────────────────────────────────────────────────
 ; maple_rx — receives Maple frames from the Dreamcast
 ; ─────────────────────────────────────────────────────────────────────────────
-; Detects edges by comparing current pin state to previous state.
-; Autopushes 8-bit bytes to the RX FIFO.
+; The Maple SOP from the DC host consists of several transitions.  SDCKB goes
+; LOW part-way through SOP and only returns HIGH at the very end of SOP, just
+; before data bits begin.  We exploit this to bracket the entire SOP cleanly:
+;   1. Wait for idle (both pins HIGH).
+;   2. Wait for SDCKB to go LOW  (SOP is underway).
+;   3. Wait for SDCKB to go HIGH (SOP complete — data phase starts now).
+;   4. push noblock — discard any SOP bits that accumulated in the ISR and
+;      reset the bit counter so the next byte is byte-aligned.
+; After that the standard edge-detect / decode loop runs, outputting one
+; decoded Maple byte per FIFO push (8 bits, left-shift, autopush).
 
 .program maple_rx
 
 start:
-    wait 1 pin 0
-    wait 1 pin 1
-    mov x pins              ; Read pins
+    wait 1 pin 0            ; Wait until SDCKA is HIGH (idle / post-EOP)
+    wait 1 pin 1            ; Wait until SDCKB is HIGH (idle)
+    wait 0 pin 1            ; Wait for SDCKB to go LOW  (SOP in progress)
+    wait 1 pin 1            ; Wait for SDCKB to go HIGH (SOP complete)
+    push noblock            ; Discard accumulated SOP bits; reset ISR bit counter
+    mov x pins              ; Capture current pin state (both HIGH) as baseline
 loop:
-    mov y pins              ; Read pins
-    jmp x!=y check_val      ; Branch if pins changed since last read
+    mov y pins              ; Sample current pin state
+    jmp x!=y check_val      ; Act on any change
 mid_loop:
-    mov x y                 ;
-    jmp loop                ; Pins stayed the same, loop
+    mov x y                 ; No change — update baseline
+    jmp loop
 
 check_val:
-    jmp !x mid_loop         ; If X is 0, this means that pins changed because of a rising edge, so just return
+    jmp !x mid_loop         ; prev state was 0 (both LOW) → rising edge, skip
 
-    jmp y-- not_zero        ; If Y == 0, then both pins are LOW and we get a 0 data bit
-    set x 0                 ; Y was 0
+    jmp y-- not_zero        ; y==0 → both pins just went LOW → bit 0
+    set x 0
     jmp send_zero
 
 not_zero:
-    jmp y-- not_one         ; If Y == 1, then 1 pin is HIGH and we get a 1 data bit
+    jmp y-- not_one         ; y==1 (SDCKA HIGH, SDCKB LOW) → bit 1
     set x 1
     jmp send_one
 not_one:
-    jmp y-- not_two         ; If Y == 2, then 1 pin is HIGH and we get a 1 data bit
+    jmp y-- not_two         ; y==2 (SDCKB HIGH, SDCKA LOW) → bit 1
     set x 2
     jmp send_one
-not_two:                    ; Y == 3, so both pins are HIGH, this is meaningless
+not_two:                    ; y==3 → both HIGH (EOP / idle), no data bit
     set x 3
     jmp loop
 
 send_zero:
-    set y 0                 ; Send a 0 to the ISR and go back to checking for pin changes
+    set y 0
     jmp send_bit
 send_one:
-    set y 1                 ; Send a 1 to the ISR and go back to checking for pin changes
+    set y 1
 send_bit:
-    in y 1
+    in y 1                  ; Shift decoded bit into ISR; autopush every 8 bits
     jmp loop
 
 % c-sdk {

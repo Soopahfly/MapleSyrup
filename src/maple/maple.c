@@ -121,78 +121,72 @@ static uint32_t build_ctrl_rumble_ack(uint8_t dest, uint8_t src,
 }
 
 // ── RX: receive a complete Maple frame ───────────────────────────────────────
-// The dreamwave RX PIO pushes 8-bit groups (in low byte of 32-bit FIFO word).
-// Each group of 8 bits represents 8 sampled Maple bus data bits.
-// Two consecutive PIO "bytes" span one actual Maple data byte:
-//   packet_byte = ((prev & 0x03) << 6) | ((cur & 0xFC) >> 2)
-// SOF is detected when (cur & 0xFC) == 0b10000100.
+// The maple_rx PIO handles SOP detection internally (see maple.pio start:).
+// After SOP, it outputs one decoded Maple byte per FIFO push (8 decoded bits,
+// left-shift autopush).  We just read bytes directly — no reconstruction needed.
 //
-// Returns number of payload bytes assembled (0 on failure/timeout).
+// Frame layout from PIO:
+//   byte 0 : frame_words  (number of 32-bit payload words)
+//   byte 1 : command
+//   byte 2 : destination address
+//   byte 3 : source address
+//   bytes 4..(4 + frame_words*4 - 1) : payload
+//   last byte : CRC (XOR of all preceding bytes)
+//
+// Returns total byte count including CRC (≥5 on success, 0 on error/timeout).
 static uint32_t rx_receive_frame(void) {
     PIO pio = MAPLE_PIO;
     uint sm = MAPLE_SM_RX;
 
-    // Restart SM from beginning to resync
+    // Restart SM — it will run start: which waits for idle then brackets the
+    // SOP with wait-for-SDCKB-LOW / wait-for-SDCKB-HIGH, clears the ISR via
+    // push noblock, then enters the byte-decode loop.
     pio_sm_set_enabled(pio, sm, false);
     pio_sm_clear_fifos(pio, sm);
     pio_sm_restart(pio, sm);
     pio_sm_exec(pio, sm, pio_encode_jmp(rx_offset));
     pio_sm_set_enabled(pio, sm, true);
 
-    // Set SDCKB as input before reading
+    // Ensure both Maple pins are inputs for RX
+    gpio_set_dir(PIN_MAPLE_SDCKA, GPIO_IN);
     gpio_set_dir(PIN_MAPLE_SDCKB, GPIO_IN);
+    gpio_set_function(PIN_MAPLE_SDCKA, GPIO_FUNC_PIO0);
     gpio_set_function(PIN_MAPLE_SDCKB, GPIO_FUNC_PIO0);
 
-    enum { IDLE, READING } state = IDLE;
-    const uint32_t upper = 0xFC;  // 0b11111100
-    const uint32_t lower = 0x03;  // 0b00000011
-    uint8_t cur_byte = 0, prev_byte = 0;
-    uint32_t bytes_read = 0, max_bytes = 5;  // 4 header + 1 CRC minimum
-    uint8_t checksum = 0;
+    uint32_t bytes_read = 0;
+    uint32_t max_bytes  = 5;   // 4 header + 1 CRC minimum
+    uint8_t  checksum   = 0;
 
-    // Timeout: 5 ms (in tight loop iterations; roughly 1M iterations/ms at 150 MHz)
-    uint32_t timeout = 5000000u;
+    // Initial timeout covers ≥2 DC polling intervals (~8 ms each) while the
+    // SM waits for the SOP.  Between bytes the timeout is much shorter.
+    uint32_t timeout = 20000000u;   // ~20 ms at 150 MHz
 
     while (timeout--) {
         if (pio_sm_is_rx_fifo_empty(pio, sm)) continue;
 
-        uint32_t word = pio_sm_get(pio, sm);
-        cur_byte = (uint8_t)(word & 0xFF);
+        // Each FIFO word contains one decoded Maple byte in bits [7:0].
+        uint8_t packet_byte = (uint8_t)(pio_sm_get(pio, sm) & 0xFF);
 
-        if (state == IDLE) {
-            // SOF marker: specific pattern in the bit-stream
-            if ((cur_byte & upper) == 0b10000100) {
-                state = READING;
-                bytes_read = 0;
-                max_bytes = 5;
-                checksum = 0;
-            }
-        } else {
-            // Reassemble actual Maple byte from two PIO bytes
-            uint8_t packet_byte = (uint8_t)(((prev_byte & lower) << 6) | ((cur_byte & upper) >> 2));
+        if (bytes_read < MAX_RX_BYTES)
+            rx_bytes[bytes_read] = packet_byte;
+        bytes_read++;
 
-            if (bytes_read < MAX_RX_BYTES) {
-                rx_bytes[bytes_read] = packet_byte;
+        if (bytes_read == 1) {
+            // frame_words tells us how many 4-byte payload words follow
+            max_bytes = 4 + (uint32_t)packet_byte * 4 + 1;
+        } else if (bytes_read >= max_bytes) {
+            // This is the CRC byte — verify
+            if (checksum != packet_byte) {
+                printf("[maple] RX CRC mismatch (got 0x%02X, want 0x%02X)\n",
+                       packet_byte, checksum);
+                return 0;
             }
-            bytes_read++;
-
-            if (bytes_read == 1) {
-                // First byte is header word count; extend max_bytes
-                max_bytes += (uint32_t)packet_byte * 4;
-            } else if (bytes_read == max_bytes) {
-                // Last byte is CRC
-                if (checksum != packet_byte) {
-                    printf("[maple] RX CRC mismatch (got 0x%02X, expected 0x%02X)\n",
-                           packet_byte, checksum);
-                    return 0;
-                }
-                return bytes_read;
-            }
-            checksum ^= packet_byte;
+            return bytes_read;
         }
 
-        prev_byte = cur_byte;
-        timeout = 5000000u;  // reset timeout after each received byte
+        checksum ^= packet_byte;
+        // Reset timeout between bytes — once a frame starts bytes come fast
+        timeout = 1000000u;   // ~1 ms per byte is very generous at 2 Mbps
     }
 
     return 0;  // timeout
@@ -222,7 +216,9 @@ static void handle_command(void) {
     // Broadcast address     = 0x00 (all peripherals respond).
     // Sub-peripheral bit: dest & 0x01 non-zero means addressed to a sub-device.
     bool is_broadcast   = (dest == MAPLE_ADDR_HOST);
-    bool is_controller  = (dest == MAPLE_ADDR_CONTROLLER);
+    // Accept 0x20 (no sub-peripherals) and 0x21 (sub-slot 1 present) — DC may
+    // use either depending on whether it has seen our device info yet.
+    bool is_controller  = (dest == 0x20) || (dest == 0x21);
     bool is_vmu         = (dest == MAPLE_ADDR_VMU) || (!is_controller && (dest & 0x01));
     if (!is_broadcast && !is_controller && !is_vmu) {
         return;

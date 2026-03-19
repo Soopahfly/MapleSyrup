@@ -2,10 +2,10 @@
 
 // ── Maple Bus ─────────────────────────────────────────────────────────────────
 // SDCKA and SDCKB must be consecutive (PIO IN/OUT base + offset).
-// Matches Pico2Maple-fw standard layout: GPIO 16 (SDCKA) and GPIO 17 (SDCKB).
-// CYW43 on Pico 2 W uses GPIO 23/24/25/29 — no conflict with 16/17.
-#define PIN_MAPLE_SDCKA     16
-#define PIN_MAPLE_SDCKB     17      // Must be PIN_MAPLE_SDCKA + 1
+// Matches USB4MAPLE community standard: GP14 (SDCKA) and GP15 (SDCKB).
+// CYW43 on Pico 2 W uses GPIO 23/24/25/29 — no conflict with 14/15.
+#define PIN_MAPLE_SDCKA     14
+#define PIN_MAPLE_SDCKB     15      // Must be PIN_MAPLE_SDCKA + 1
 
 // ── PIO ───────────────────────────────────────────────────────────────────────
 #define MAPLE_PIO           pio0
@@ -38,10 +38,11 @@
 #define VMU_SD_CS_PIN       13
 #define VMU_SD_BAUD         (12 * 1000 * 1000)  // 12 MHz
 
-// ── OLED Display (I2C0) ───────────────────────────────────────────────────────
-#define PIN_OLED_SDA        4
-#define PIN_OLED_SCL        5
-#define OLED_I2C            i2c0
+// ── OLED Display (I2C1) ───────────────────────────────────────────────────────
+// Matches USB4MAPLE community standard: GP26 (SDA) and GP27 (SCL) on I2C1.
+#define PIN_OLED_SDA        26
+#define PIN_OLED_SCL        27
+#define OLED_I2C            i2c1
 #define OLED_I2C_ADDR       0x3C
 #define OLED_WIDTH          128
 #define OLED_HEIGHT         64
@@ -55,8 +56,8 @@
 #endif
 
 // ── VMU Buzzer ────────────────────────────────────────────────────────────────
-// GPIO 3 matches Pico2Maple-fw standard layout (PWM slice 1 channel B).
-#define PIN_BUZZER          3
+// Matches USB4MAPLE community standard: GP6 (passive buzzer).
+#define PIN_BUZZER          6
 
 // ── VMU Banks ─────────────────────────────────────────────────────────────────
 // Select + R1 / L1 cycles through VMU bank slots 0-9.

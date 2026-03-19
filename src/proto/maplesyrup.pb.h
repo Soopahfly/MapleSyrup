@@ -58,7 +58,7 @@ typedef struct _MapleSyrupConfig {
 } MapleSyrupConfig;
 
 /* Default-value initializers */
-#define GpioConfig_init_default    {16, 17, 3, 4, 5, 10, 11, 12, 13, 22}
+#define GpioConfig_init_default    {14, 15, 6, 26, 27, 10, 11, 12, 13, 22}
 #define GlobalConfig_init_default  {10, 90, 30, 10, 0, false, false, false, false, 0}
 #define GameConfig_init_default    {0, "", 0xFF, 0xFF, 0, {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF}}
 #define MapleSyrupConfig_init_default {2, false, GpioConfig_init_default, false, GlobalConfig_init_default, 0, {}}

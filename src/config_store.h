@@ -10,7 +10,7 @@ typedef GlobalConfig  global_cfg_t;
 typedef GameConfig    game_cfg_t;
 
 // ── Constants ─────────────────────────────────────────────────────────────
-#define CONFIG_VERSION       2
+#define CONFIG_VERSION       3
 #define MAX_GAME_CFGS        32
 #define GAME_NAME_MAX_LEN    28
 
